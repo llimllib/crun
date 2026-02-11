@@ -1,0 +1,9 @@
+{
+  "name": "cancurrently-workspace",
+  "private": true,
+  "scripts": {
+    "build": "cargo build --release",
+    "test": "cd tests/integration && npm test",
+    "test:watch": "cd tests/integration && npm run test:watch"
+  }
+}

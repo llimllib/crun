@@ -1,0 +1,14 @@
+{
+  "name": "cancurrently-tests",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "cargo build --release",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.20",
+    "vitest": "^3.2.4"
+  }
+}

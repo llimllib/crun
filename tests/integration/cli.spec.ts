@@ -1,0 +1,371 @@
+/**
+ * Integration tests for cancurrently CLI.
+ * Adapted from concurrently's bin/index.spec.ts
+ * 
+ * These tests run the actual binary and verify its behavior through
+ * stdout/stderr and exit codes - making them language-independent.
+ */
+import { spawn } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { beforeAll, describe, expect, it } from 'vitest';
+
+import { run, createKillMessage, FIXTURES_PATH } from './test-utils.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Build the binary before running tests
+beforeAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+        const build = spawn('cargo', ['build', '--release'], {
+            cwd: path.resolve(__dirname, '../..'),
+            stdio: 'inherit',
+        });
+        build.on('exit', (code) => {
+            if (code === 0) resolve();
+            else reject(new Error(`Build failed with code ${code}`));
+        });
+    });
+}, 60000);
+
+it('has help command', async () => {
+    const { exit } = run('--help');
+    const { code } = await exit;
+    expect(code).toBe(0);
+});
+
+it('prints help when no arguments are passed', async () => {
+    const { exit } = run('');
+    const { code } = await exit;
+    expect(code).toBe(0);
+});
+
+describe('has version command', () => {
+    it.each(['--version', '-V'])('%s', async (arg) => {
+        const child = run(arg);
+        const lines = await child.getLogLines();
+        const { code } = await child.exit;
+        
+        expect(code).toBe(0);
+        // Should output a version number
+        expect(lines.some(line => /\d+\.\d+\.\d+/.test(line))).toBe(true);
+    });
+});
+
+describe('exiting conditions', () => {
+    it('is of success by default when running successful commands', async () => {
+        const { exit } = run('"echo foo" "echo bar"');
+        const { code } = await exit;
+        expect(code).toBe(0);
+    });
+
+    it('is of failure by default when one of the command fails', async () => {
+        const { exit } = run('"echo foo" "exit 1"');
+        const { code } = await exit;
+        expect(code).toBeGreaterThan(0);
+    });
+
+    it('is of success when --success=first and first command to exit succeeds', async () => {
+        const { exit } = run(
+            '--success=first "echo foo" "node sleep.mjs 0.5 && exit 1"'
+        );
+        const { code } = await exit;
+        expect(code).toBe(0);
+    });
+
+    it('is of failure when --success=first and first command to exit fails', async () => {
+        const { exit } = run(
+            '--success=first "exit 1" "node sleep.mjs 0.5 && echo foo"'
+        );
+        const { code } = await exit;
+        expect(code).toBeGreaterThan(0);
+    });
+
+    describe('is of success when --success=last and last command to exit succeeds', () => {
+        it.each(['--success=last', '-s last'])('%s', async (arg) => {
+            const { exit } = run(
+                `${arg} "exit 1" "node sleep.mjs 0.5 && echo foo"`
+            );
+            const { code } = await exit;
+            expect(code).toBe(0);
+        });
+    });
+
+    it('is of failure when --success=last and last command to exit fails', async () => {
+        const { exit } = run(
+            '--success=last "echo foo" "node sleep.mjs 0.5 && exit 1"'
+        );
+        const { code } = await exit;
+        expect(code).toBeGreaterThan(0);
+    });
+});
+
+describe('does not log any extra output', () => {
+    it.each(['--raw', '-r'])('%s', async (arg) => {
+        const lines = await run(`${arg} "echo foo" "echo bar"`).getLogLines();
+
+        expect(lines).toHaveLength(2);
+        expect(lines).toContainEqual(expect.stringContaining('foo'));
+        expect(lines).toContainEqual(expect.stringContaining('bar'));
+    });
+});
+
+describe('--hide', () => {
+    it('hides the output of a process by its index', async () => {
+        const lines = await run('--hide 1 "echo foo" "echo bar"').getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('foo'));
+        expect(lines).not.toContainEqual(expect.stringContaining('bar'));
+    });
+
+    it('hides the output of a process by its name', async () => {
+        const lines = await run('-n foo,bar --hide bar "echo foo" "echo bar"').getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('foo'));
+        expect(lines).not.toContainEqual(expect.stringContaining('bar'));
+    });
+});
+
+describe('--group', () => {
+    it('groups output per process', async () => {
+        const lines = await run(
+            '--group "echo foo && node sleep.mjs 0.3 && echo bar" "node sleep.mjs 0.1 && echo baz"'
+        ).getLogLines();
+
+        // First command's output should be together, before second command's output
+        const fooIndex = lines.findIndex(l => l.includes('foo'));
+        const barIndex = lines.findIndex(l => l.includes('bar'));
+        const bazIndex = lines.findIndex(l => l.includes('baz'));
+        
+        expect(fooIndex).toBeLessThan(barIndex);
+        expect(barIndex).toBeLessThan(bazIndex);
+    });
+});
+
+describe('--names', () => {
+    describe('prefixes with names', () => {
+        it.each(['--names', '-n'])('%s', async (arg) => {
+            const lines = await run(`${arg} foo,bar "echo foo" "echo bar"`).getLogLines();
+
+            expect(lines).toContainEqual(expect.stringContaining('[foo]'));
+            expect(lines).toContainEqual(expect.stringContaining('[bar]'));
+        });
+    });
+
+    it('is split using --name-separator arg', async () => {
+        const lines = await run(
+            '--names "foo|bar" --name-separator "|" "echo foo" "echo bar"'
+        ).getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('[foo]'));
+        expect(lines).toContainEqual(expect.stringContaining('[bar]'));
+    });
+});
+
+describe('specifies custom prefix', () => {
+    it.each(['--prefix', '-p'])('%s', async (arg) => {
+        const lines = await run(`${arg} command "echo foo" "echo bar"`).getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('[echo foo]'));
+        expect(lines).toContainEqual(expect.stringContaining('[echo bar]'));
+    });
+});
+
+describe('specifies custom prefix length', () => {
+    it.each(['--prefix command --prefix-length 5', '-p command -l 5'])('%s', async (arg) => {
+        const lines = await run(`${arg} "echo foo" "echo bar"`).getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('[ec..o]'));
+        expect(lines).toContainEqual(expect.stringContaining('[ec..r]'));
+    });
+});
+
+describe('--pad-prefix', () => {
+    it('pads prefixes with spaces', async () => {
+        const lines = await run('--pad-prefix -n foo,barbaz "echo foo" "echo bar"').getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('[foo   ]'));
+        expect(lines).toContainEqual(expect.stringContaining('[barbaz]'));
+    });
+});
+
+describe('--restart-tries', () => {
+    it('changes how many times a command will restart', async () => {
+        const lines = await run('--restart-tries 1 "exit 1"').getLogLines();
+
+        expect(lines).toEqual([
+            expect.stringContaining('[0] exit 1 exited with code 1'),
+            expect.stringContaining('[0] exit 1 restarted'),
+            expect.stringContaining('[0] exit 1 exited with code 1'),
+        ]);
+    });
+});
+
+describe('--kill-others', () => {
+    describe('kills on success', () => {
+        it.each(['--kill-others', '-k'])('%s', async (arg) => {
+            const lines = await run(
+                `${arg} "node sleep.mjs 10" "exit 0"`
+            ).getLogLines();
+
+            expect(lines).toContainEqual(expect.stringContaining('[1] exit 0 exited with code 0'));
+            expect(lines).toContainEqual(
+                expect.stringContaining('Sending SIGTERM to other processes')
+            );
+            expect(lines).toContainEqual(
+                expect.stringMatching(
+                    createKillMessage('[0] node sleep.mjs 10', 'SIGTERM')
+                )
+            );
+        });
+    });
+
+    it('kills on failure', async () => {
+        const lines = await run(
+            '--kill-others "node sleep.mjs 10" "exit 1"'
+        ).getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('[1] exit 1 exited with code 1'));
+        expect(lines).toContainEqual(
+            expect.stringContaining('Sending SIGTERM to other processes')
+        );
+    });
+});
+
+describe('--kill-others-on-fail', () => {
+    it('does not kill on success', async () => {
+        const lines = await run(
+            '--kill-others-on-fail "node sleep.mjs 0.5" "exit 0"'
+        ).getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('exit 0 exited with code 0'));
+        expect(lines).toContainEqual(
+            expect.stringContaining('sleep.mjs 0.5 exited with code 0')
+        );
+    });
+
+    it('kills on failure', async () => {
+        const lines = await run(
+            '--kill-others-on-fail "node sleep.mjs 10" "exit 1"'
+        ).getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('exit 1 exited with code 1'));
+        expect(lines).toContainEqual(
+            expect.stringContaining('Sending SIGTERM to other processes')
+        );
+    });
+});
+
+describe('--handle-input', () => {
+    describe('forwards input to first process by default', () => {
+        it.each(['--handle-input', '-i'])('%s', async (arg) => {
+            const child = run(`${arg} "node read-echo.mjs"`);
+            
+            child.onLine((line) => {
+                if (/READING/.test(line)) {
+                    child.stdin!.write('stop\n');
+                }
+            });
+            
+            const lines = await child.getLogLines();
+            const { code } = await child.exit;
+
+            expect(code).toBe(0);
+            expect(lines).toContainEqual(expect.stringContaining('stop'));
+            expect(lines).toContainEqual(
+                expect.stringContaining('read-echo.mjs exited with code 0')
+            );
+        });
+    });
+
+    it('forwards input to process --default-input-target', async () => {
+        const child = run(
+            '-ki --default-input-target 1 "node read-echo.mjs" "node read-echo.mjs"'
+        );
+        
+        child.onLine((line) => {
+            if (/\[1\] READING/.test(line)) {
+                child.stdin!.write('stop\n');
+            }
+        });
+        
+        const lines = await child.getLogLines();
+        const { code } = await child.exit;
+
+        expect(code).toBeGreaterThan(0);
+        expect(lines).toContainEqual(expect.stringContaining('[1] stop'));
+    });
+
+    it('forwards input to specified process', async () => {
+        const child = run('-ki "node read-echo.mjs" "node read-echo.mjs"');
+        
+        child.onLine((line) => {
+            if (/\[1\] READING/.test(line)) {
+                child.stdin!.write('1:stop\n');
+            }
+        });
+        
+        const lines = await child.getLogLines();
+        const { code } = await child.exit;
+
+        expect(code).toBeGreaterThan(0);
+        expect(lines).toContainEqual(expect.stringContaining('[1] stop'));
+    });
+});
+
+describe('--teardown', () => {
+    it('runs teardown commands when input commands exit', async () => {
+        const lines = await run('--teardown "echo bye" "echo hey"').getLogLines();
+        
+        expect(lines).toContainEqual(expect.stringContaining('hey'));
+        expect(lines).toContainEqual(expect.stringContaining('bye'));
+        expect(lines).toContainEqual(
+            expect.stringContaining('Running teardown command')
+        );
+    });
+
+    it('runs multiple teardown commands', async () => {
+        const lines = await run(
+            '--teardown "echo bye" --teardown "echo bye2" "echo hey"'
+        ).getLogLines();
+        
+        expect(lines.some(l => l.includes('bye') && !l.includes('bye2'))).toBe(true);
+        expect(lines).toContainEqual(expect.stringContaining('bye2'));
+    });
+});
+
+describe('--timings', () => {
+    it('shows timings on success', async () => {
+        const lines = await run('--timings "echo foo"').getLogLines();
+
+        // Should contain timing information
+        expect(lines).toContainEqual(expect.stringMatching(/started at/));
+        expect(lines).toContainEqual(expect.stringMatching(/stopped at.*after.*ms/));
+        
+        // Should contain a timing table
+        expect(lines).toContainEqual(expect.stringMatching(/│.*name.*│.*duration.*│/));
+    });
+
+    it('shows timings on failure', async () => {
+        const lines = await run('--timings "exit 1"').getLogLines();
+
+        expect(lines).toContainEqual(expect.stringMatching(/started at/));
+        expect(lines).toContainEqual(expect.stringMatching(/stopped at.*after.*ms/));
+    });
+});
+
+describe('--passthrough-arguments', () => {
+    it('argument placeholders are properly replaced when passthrough-arguments is enabled', async () => {
+        const lines = await run('--passthrough-arguments "echo {1}" -- foo').getLogLines();
+
+        // The command should have received 'foo' as an argument
+        expect(lines).toContainEqual(expect.stringContaining('foo'));
+    });
+
+    it('argument placeholders are not replaced when passthrough-arguments is disabled', async () => {
+        const lines = await run('"echo {1}" -- echo').getLogLines();
+
+        // {1} should be printed literally
+        expect(lines).toContainEqual(expect.stringContaining('{1}'));
+    });
+});
