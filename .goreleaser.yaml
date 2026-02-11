@@ -52,7 +52,7 @@ homebrew_casks:
   - name: crun
     repository:
       owner: llimllib
-      name: tap
+      name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     commit_author:
