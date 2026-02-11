@@ -56,7 +56,7 @@ pub fn format_prefix(
         PrefixStyle::Name => cmd.name.clone(),
         PrefixStyle::Time => {
             // Simple timestamp - could be enhanced later
-            chrono::Local::now()
+            chrono::Utc::now()
                 .format("%Y-%m-%d %H:%M:%S%.3f")
                 .to_string()
         }

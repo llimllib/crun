@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::process::Stdio;
 
-use chrono::Local;
+use chrono::Utc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
@@ -89,8 +89,8 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
     let mut restart_counts: Vec<i32> = vec![0; num_commands];
 
     // Track timing info
-    let mut started_at: Vec<Option<(Instant, chrono::DateTime<Local>)>> = vec![None; num_commands];
-    let mut ended_at: Vec<Option<(Instant, chrono::DateTime<Local>)>> = vec![None; num_commands];
+    let mut started_at: Vec<Option<(Instant, chrono::DateTime<Utc>)>> = vec![None; num_commands];
+    let mut ended_at: Vec<Option<(Instant, chrono::DateTime<Utc>)>> = vec![None; num_commands];
 
     // For --group: buffer output per command, active index tracks sequential flushing
     let mut group_buffers: Vec<Vec<String>> = vec![Vec::new(); num_commands];
@@ -136,7 +136,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                     pids.insert(index, p);
                 }
                 commands[index].state = CommandState::Running;
-                started_at[index] = Some((Instant::now(), Local::now()));
+                started_at[index] = Some((Instant::now(), Utc::now()));
 
                 // Log timing start
                 if timings && !raw {
@@ -198,7 +198,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                 };
 
                 commands[index].state = state;
-                ended_at[index] = Some((Instant::now(), Local::now()));
+                ended_at[index] = Some((Instant::now(), Utc::now()));
 
                 // Log timing stop
                 if timings && !raw {
@@ -581,8 +581,8 @@ fn signal_name(signal: i32) -> String {
 /// Print the timings summary table.
 fn print_timings_table(
     commands: &[CommandInfo],
-    started_at: &[Option<(Instant, chrono::DateTime<Local>)>],
-    ended_at: &[Option<(Instant, chrono::DateTime<Local>)>],
+    started_at: &[Option<(Instant, chrono::DateTime<Utc>)>],
+    ended_at: &[Option<(Instant, chrono::DateTime<Utc>)>],
 ) {
     // Calculate column widths
     let mut rows: Vec<(String, String, String, String, String)> = Vec::new();

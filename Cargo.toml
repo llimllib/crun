@@ -13,7 +13,10 @@ clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 thiserror = "1"
-chrono = "0.4"
+# Default features disabled to avoid iana-time-zone, which links CoreFoundation
+# on macOS and breaks cross-compilation from Linux via cargo-zigbuild.
+# We use Utc instead of Local timestamps as a tradeoff.
+chrono = { version = "0.4", default-features = false, features = ["std", "now"] }
 libc = "0.2"
 
 [dev-dependencies]
