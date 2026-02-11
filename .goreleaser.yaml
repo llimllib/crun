@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# GoReleaser config for crun (Rust project)
+#
+# Uses cargo-zigbuild for cross-compilation.
+# Run with: goreleaser release --clean
+# For local testing: goreleaser release --snapshot --clean
+
+version: 2
+
+project_name: crun
+
+before:
+  hooks:
+    - cargo fmt --check
+    - cargo clippy --all-targets --all-features -- -D warnings
+    - cargo test
+
+builds:
+  - id: crun
+    builder: rust
+    targets:
+      - x86_64-unknown-linux-gnu
+      - aarch64-unknown-linux-gnu
+      - x86_64-apple-darwin
+      - aarch64-apple-darwin
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}-{{ .Tag }}-{{ .Os }}-{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE*
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  use: github
+
+release:
+  github:
+    owner: llimllib
+    name: crun
+  draft: false
+  prerelease: auto
+  name_template: "v{{ .Version }}"
+
+homebrew_casks:
+  - name: crun
+    repository:
+      owner: llimllib
+      name: tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    homepage: "https://github.com/llimllib/crun"
+    description: "Run commands concurrently"
+    url:
+      verified: "github.com/llimllib/crun"
+
+announce:
+  skip: "true"
