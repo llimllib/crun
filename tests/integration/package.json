@@ -1,5 +1,5 @@
 {
-  "name": "cancurrently-tests",
+  "name": "crun-tests",
   "type": "module",
   "private": true,
   "scripts": {

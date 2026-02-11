@@ -1,4 +1,4 @@
-# cancurrently
+# crun
 
 A Rust port of [concurrently](https://github.com/open-cli-tools/concurrently). The original JS source is checked out in `concurrently/` for reference.
 

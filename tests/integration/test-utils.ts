@@ -1,5 +1,5 @@
 /**
- * Test runner utilities for cancurrently integration tests.
+ * Test runner utilities for crun integration tests.
  * Adapted from concurrently's bin/index.spec.ts
  */
 import { spawn, ChildProcess } from 'node:child_process';
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Path to the built binary
-const BINARY_PATH = path.resolve(__dirname, '../../target/release/cancurrently');
+const BINARY_PATH = path.resolve(__dirname, '../../target/release/crun');
 
 // Path to fixtures
 export const FIXTURES_PATH = path.resolve(__dirname, 'fixtures');
@@ -51,7 +51,7 @@ export interface RunResult {
 }
 
 /**
- * Runs cancurrently with the given arguments.
+ * Runs crun with the given arguments.
  * Returns observables/promises for the output and exit status.
  */
 export const run = (args: string): RunResult => {

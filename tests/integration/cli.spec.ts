@@ -1,5 +1,5 @@
 /**
- * Integration tests for cancurrently CLI.
+ * Integration tests for crun CLI.
  * Adapted from concurrently's bin/index.spec.ts
  * 
  * These tests run the actual binary and verify its behavior through

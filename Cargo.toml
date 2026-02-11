@@ -1,10 +1,10 @@
 [package]
-name = "cancurrently"
+name = "crun"
 version = "0.1.0"
 edition = "2021"
 description = "Run commands concurrently - a Rust port of concurrently"
 license = "MIT"
-repository = "https://github.com/llimllib/cancurrently"
+repository = "https://github.com/llimllib/crun"
 keywords = ["concurrent", "parallel", "command", "shell", "process"]
 categories = ["command-line-utilities", "development-tools"]
 
@@ -19,7 +19,7 @@ libc = "0.2"
 [dev-dependencies]
 
 [[bin]]
-name = "cancurrently"
+name = "crun"
 path = "src/main.rs"
 
 [profile.release]

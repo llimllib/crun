@@ -1,5 +1,5 @@
 {
-  "name": "cancurrently-workspace",
+  "name": "crun-workspace",
   "private": true,
   "scripts": {
     "build": "cargo build --release",

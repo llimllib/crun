@@ -1,9 +1,9 @@
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(name = "cancurrently")]
+#[command(name = "crun")]
 #[command(author, version, about = "Run commands concurrently", long_about = None)]
-#[command(after_help = "For documentation, visit: https://github.com/llimllib/cancurrently")]
+#[command(after_help = "For documentation, visit: https://github.com/llimllib/crun")]
 pub struct Args {
     /// Commands to run concurrently
     #[arg(required = false)]

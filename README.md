@@ -1,17 +1,17 @@
-# cancurrently
+# crun
 
 A Rust port of [concurrently](https://github.com/open-cli-tools/concurrently) - run commands concurrently.
 
 ## Installation
 
 ```bash
-cargo install cancurrently
+cargo install crun
 ```
 
 ## Usage
 
 ```bash
-cancurrently "echo foo" "echo bar"
+crun "echo foo" "echo bar"
 ```
 
 ## Development

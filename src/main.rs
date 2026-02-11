@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
 
     // If no commands provided, show help
     if args.commands.is_empty() {
-        Args::parse_from(["cancurrently", "--help"]);
+        Args::parse_from(["crun", "--help"]);
         return Ok(());
     }
 
