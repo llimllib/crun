@@ -1,6 +1,7 @@
 use clap::Parser;
 
 mod cli;
+mod color;
 mod command;
 mod input;
 mod output;

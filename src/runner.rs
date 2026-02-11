@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 
 use crate::cli::Args;
+use crate::color::{assign_colors, colorize};
 use crate::command::{shell_command, CommandInfo, CommandState};
 use crate::input;
 use crate::output::{format_line, format_prefix, max_prefix_inner_width, pad_prefix, PrefixStyle};
@@ -50,6 +51,9 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
 
     let num_commands = commands.len();
     let command_lines: Vec<String> = args.commands.clone();
+
+    // Assign colors to commands
+    let colors = assign_colors(&args.prefix_colors, num_commands, args.no_color || raw);
 
     // Determine prefix style
     let prefix_style = if raw {
@@ -143,6 +147,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                         prefix_length,
                         do_pad,
                         pad_width,
+                        &colors[index],
                     );
                     let ts = started_at[index].unwrap().1.format("%Y-%m-%d %H:%M:%S%.3f");
                     let msg = format!("{} started at {}", commands[index].command_line, ts);
@@ -171,6 +176,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                         prefix_length,
                         do_pad,
                         pad_width,
+                        &colors[index],
                     )
                 };
 
@@ -203,6 +209,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                         prefix_length,
                         do_pad,
                         pad_width,
+                        &colors[index],
                     );
                     let ts = ended_at[index].unwrap().1.format("%Y-%m-%d %H:%M:%S%.3f");
                     let duration_ms = ended_at[index]
@@ -233,6 +240,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                         prefix_length,
                         do_pad,
                         pad_width,
+                        &colors[index],
                     );
 
                     // Log exit
@@ -289,6 +297,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                         prefix_length,
                         do_pad,
                         pad_width,
+                        &colors[index],
                     );
                     let exit_msg = format_exit_message(&commands[index]);
                     if !exit_msg.is_empty() {
@@ -428,13 +437,15 @@ fn make_prefix(
     prefix_length: usize,
     do_pad: bool,
     pad_width: usize,
+    color: &str,
 ) -> String {
     let p = format_prefix(cmd, style, pid, prefix_length);
-    if do_pad && pad_width > 0 {
+    let p = if do_pad && pad_width > 0 {
         pad_prefix(&p, pad_width)
     } else {
         p
-    }
+    };
+    colorize(&p, color)
 }
 
 /// Format the exit message for a command.
