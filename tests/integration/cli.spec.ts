@@ -98,6 +98,25 @@ describe('exiting conditions', () => {
         const { code } = await exit;
         expect(code).toBeGreaterThan(0);
     });
+
+    it('is of success when a SIGINT is sent', async () => {
+        const child = run('"node read-echo.mjs"');
+        // Wait for command to have started before sending SIGINT
+        child.onLine((line) => {
+            if (/READING/.test(line)) {
+                process.kill(Number(child.pid), 'SIGINT');
+            }
+        });
+        const lines = await child.getLogLines();
+        const exit = await child.exit;
+
+        expect(exit.code).toBe(0);
+        expect(lines).toContainEqual(
+            expect.stringMatching(
+                createKillMessage('[0] node read-echo.mjs', 'SIGINT'),
+            ),
+        );
+    });
 });
 
 describe('does not log any extra output', () => {
@@ -121,6 +140,22 @@ describe('--hide', () => {
     it('hides the output of a process by its name', async () => {
         const lines = await run('-n foo,bar --hide bar "echo foo" "echo bar"').getLogLines();
 
+        expect(lines).toContainEqual(expect.stringContaining('foo'));
+        expect(lines).not.toContainEqual(expect.stringContaining('bar'));
+    });
+
+    it('hides the output of a process by its index in raw mode', async () => {
+        const lines = await run('--hide 1 --raw "echo foo" "echo bar"').getLogLines();
+
+        expect(lines).toHaveLength(1);
+        expect(lines).toContainEqual(expect.stringContaining('foo'));
+        expect(lines).not.toContainEqual(expect.stringContaining('bar'));
+    });
+
+    it('hides the output of a process by its name in raw mode', async () => {
+        const lines = await run('-n foo,bar --hide bar --raw "echo foo" "echo bar"').getLogLines();
+
+        expect(lines).toHaveLength(1);
         expect(lines).toContainEqual(expect.stringContaining('foo'));
         expect(lines).not.toContainEqual(expect.stringContaining('bar'));
     });

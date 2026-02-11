@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use chrono::Utc;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -76,8 +78,46 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
     // Channel for events from child tasks
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
 
-    // Track PIDs per command for kill-others
-    let mut pids: HashMap<usize, u32> = HashMap::new();
+    // Track PIDs per command, shared with the signal handler
+    let pids: Arc<std::sync::Mutex<HashMap<usize, u32>>> =
+        Arc::new(std::sync::Mutex::new(HashMap::new()));
+
+    // Track whether we received SIGINT (to treat exit codes as 0)
+    let caught_sigint = Arc::new(AtomicBool::new(false));
+
+    // Set up signal forwarding: when crun receives SIGINT/SIGTERM, forward to all children
+    #[cfg(unix)]
+    {
+        let pids_for_signal = Arc::clone(&pids);
+        let caught_sigint_for_handler = Arc::clone(&caught_sigint);
+        tokio::spawn(async move {
+            let mut sigint =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+                    .expect("failed to register SIGINT handler");
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to register SIGTERM handler");
+            let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+                .expect("failed to register SIGHUP handler");
+
+            let signal_num = tokio::select! {
+                _ = sigint.recv() => {
+                    caught_sigint_for_handler.store(true, Ordering::SeqCst);
+                    libc::SIGINT
+                }
+                _ = sigterm.recv() => libc::SIGTERM,
+                _ = sighup.recv() => libc::SIGHUP,
+            };
+
+            // Forward the signal to all child process groups
+            let pids = pids_for_signal.lock().unwrap();
+            for pid in pids.values() {
+                unsafe {
+                    libc::kill(-(*pid as i32), signal_num);
+                }
+            }
+        });
+    }
 
     // Track order of completion for --success first/last
     let mut exit_order: Vec<(usize, i32)> = Vec::new();
@@ -133,7 +173,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
         match event {
             Event::Started { index, pid } => {
                 if let Some(p) = pid {
-                    pids.insert(index, p);
+                    pids.lock().unwrap().insert(index, p);
                 }
                 commands[index].state = CommandState::Running;
                 started_at[index] = Some((Instant::now(), Utc::now()));
@@ -143,7 +183,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                     let prefix = make_prefix(
                         &commands[index],
                         &prefix_style,
-                        pids.get(&index).copied(),
+                        pids.lock().unwrap().get(&index).copied(),
                         prefix_length,
                         do_pad,
                         pad_width,
@@ -172,7 +212,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                     make_prefix(
                         &commands[index],
                         &prefix_style,
-                        pids.get(&index).copied(),
+                        pids.lock().unwrap().get(&index).copied(),
                         prefix_length,
                         do_pad,
                         pad_width,
@@ -205,7 +245,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                     let prefix = make_prefix(
                         &commands[index],
                         &prefix_style,
-                        pids.get(&index).copied(),
+                        pids.lock().unwrap().get(&index).copied(),
                         prefix_length,
                         do_pad,
                         pad_width,
@@ -236,7 +276,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                     let prefix = make_prefix(
                         &commands[index],
                         &prefix_style,
-                        pids.get(&index).copied(),
+                        pids.lock().unwrap().get(&index).copied(),
                         prefix_length,
                         do_pad,
                         pad_width,
@@ -293,7 +333,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                     let prefix = make_prefix(
                         &commands[index],
                         &prefix_style,
-                        pids.get(&index).copied(),
+                        pids.lock().unwrap().get(&index).copied(),
                         prefix_length,
                         do_pad,
                         pad_width,
@@ -346,6 +386,11 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
     // Run teardown commands
     if !args.teardown.is_empty() {
         run_teardown_commands(&args.teardown).await;
+    }
+
+    // If we caught SIGINT, exit 0 (matching concurrently's behavior)
+    if caught_sigint.load(Ordering::SeqCst) {
+        return Ok(0);
     }
 
     // Determine exit code based on --success flag
@@ -411,8 +456,13 @@ fn should_restart(restart_tries: i32, current_restarts: i32) -> bool {
 ///
 /// Sends SIGTERM to the process group (negative PID) so that child processes
 /// spawned by the shell are also terminated.
-fn kill_other_processes(except_index: usize, exited: &[bool], pids: &HashMap<usize, u32>) {
-    for (index, pid) in pids {
+fn kill_other_processes(
+    except_index: usize,
+    exited: &[bool],
+    pids: &Arc<std::sync::Mutex<HashMap<usize, u32>>>,
+) {
+    let pids = pids.lock().unwrap();
+    for (index, pid) in pids.iter() {
         if *index != except_index && !exited[*index] {
             #[cfg(unix)]
             {
