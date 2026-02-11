@@ -1,6 +1,12 @@
 # crun
 
+**C**oncurrent **Run**
+
 A Rust port of [concurrently](https://github.com/open-cli-tools/concurrently) — run commands concurrently.
+
+`crun` is useful when you need to do something like start a web server for your backend and frontend at the same time, and you want the logs streamed to you in such a way that you can easily tell which logs came from which service. You can use `ctrl-c` to kill all the services at the same time.
+
+![](docs/static/screenshot.png)
 
 ## Installation
 
