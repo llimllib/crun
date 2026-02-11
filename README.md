@@ -48,6 +48,12 @@ npm test
 cargo test
 ```
 
+### Make a release
+
+```bash
+make release
+```
+
 ## License
 
 MIT
