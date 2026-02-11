@@ -1,4 +1,4 @@
-.PHONY: check fmt clippy doc test build integration-test all
+.PHONY: check fmt clippy doc test build integration-test test-linux all
 
 # Run all checks
 all: check test
@@ -30,6 +30,10 @@ test:
 integration-test:
 	cargo build --release
 	cd tests/integration && npm test
+
+# Run all checks and tests in a Linux container
+test-linux:
+	docker build -f Dockerfile.test -t crun-test . && docker run --rm crun-test
 
 # Format code (fix, not just check)
 fix-fmt:
