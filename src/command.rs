@@ -49,11 +49,22 @@ impl CommandInfo {
 }
 
 /// Creates a `tokio::process::Command` that runs the given command line through the shell.
+///
+/// On Unix, each command is spawned in its own process group (via `setsid`) so that
+/// signals can be sent to the entire group, ensuring child processes are also killed.
 pub fn shell_command(cmd: &str) -> tokio::process::Command {
     #[cfg(unix)]
     {
         let mut c = tokio::process::Command::new("/bin/sh");
         c.arg("-c").arg(cmd);
+        // SAFETY: setsid() is async-signal-safe and has no side effects that
+        // could corrupt state between fork and exec.
+        unsafe {
+            c.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
         c
     }
     #[cfg(windows)]

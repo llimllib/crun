@@ -399,13 +399,17 @@ fn should_restart(restart_tries: i32, current_restarts: i32) -> bool {
 }
 
 /// Kill all running processes except the one at `except_index`.
+///
+/// Sends SIGTERM to the process group (negative PID) so that child processes
+/// spawned by the shell are also terminated.
 fn kill_other_processes(except_index: usize, exited: &[bool], pids: &HashMap<usize, u32>) {
     for (index, pid) in pids {
         if *index != except_index && !exited[*index] {
             #[cfg(unix)]
             {
+                // Kill the process group (negative PID) so shell children also receive the signal
                 unsafe {
-                    libc::kill(*pid as i32, libc::SIGTERM);
+                    libc::kill(-(*pid as i32), libc::SIGTERM);
                 }
             }
             #[cfg(not(unix))]
