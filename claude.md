@@ -33,6 +33,13 @@ Integration tests are expected to fail until features are implemented. Run them 
 
 See `docs/plans/2026-02-11-implementation-plan.md` for the phased implementation plan.
 
+## Ask Before Changing
+
+Always ask for explicit approval before:
+
+- Modifying integration tests (`tests/integration/`)
+- Adding, removing, or changing dependencies in `Cargo.toml`
+
 ## Style
 
 - Follow standard `rustfmt` formatting (no custom config)
