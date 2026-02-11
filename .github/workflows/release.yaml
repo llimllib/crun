@@ -1,0 +1,177 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: crun_linux_amd64.tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: crun_linux_arm64.tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: crun_darwin_amd64.tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: crun_darwin_arm64.tar.gz
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Create archive
+        run: |
+          mkdir -p staging
+          cp target/${{ matrix.target }}/release/crun staging/
+          cd staging
+          tar czf ../${{ matrix.archive }} crun
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum crun_*.tar.gz > checksums.txt
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            artifacts/*
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get release version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Download release archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download ${{ github.ref_name }} \
+            --repo ${{ github.repository }} \
+            --pattern 'crun_*.tar.gz' \
+            --dir archives
+
+      - name: Calculate SHA256 sums
+        id: sha
+        run: |
+          echo "darwin_arm64=$(sha256sum archives/crun_darwin_arm64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "darwin_amd64=$(sha256sum archives/crun_darwin_amd64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "linux_arm64=$(sha256sum archives/crun_linux_arm64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "linux_amd64=$(sha256sum archives/crun_linux_amd64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Checkout tap repo
+        uses: actions/checkout@v6
+        with:
+          repository: llimllib/tap
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          path: tap
+
+      - name: Update formula
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          REPO=${{ github.repository }}
+          cat > tap/Formula/crun.rb << 'FORMULA'
+          class Crun < Formula
+            desc "Run commands concurrently"
+            homepage "https://github.com/REPO_PLACEHOLDER"
+            license "MIT"
+            version "VERSION_PLACEHOLDER"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/REPO_PLACEHOLDER/releases/download/vVERSION_PLACEHOLDER/crun_darwin_arm64.tar.gz"
+                sha256 "SHA_DARWIN_ARM64"
+              else
+                url "https://github.com/REPO_PLACEHOLDER/releases/download/vVERSION_PLACEHOLDER/crun_darwin_amd64.tar.gz"
+                sha256 "SHA_DARWIN_AMD64"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/REPO_PLACEHOLDER/releases/download/vVERSION_PLACEHOLDER/crun_linux_arm64.tar.gz"
+                sha256 "SHA_LINUX_ARM64"
+              else
+                url "https://github.com/REPO_PLACEHOLDER/releases/download/vVERSION_PLACEHOLDER/crun_linux_amd64.tar.gz"
+                sha256 "SHA_LINUX_AMD64"
+              end
+            end
+
+            def install
+              bin.install "crun"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/crun --version")
+            end
+          end
+          FORMULA
+
+          sed -i "s|REPO_PLACEHOLDER|${REPO}|g" tap/Formula/crun.rb
+          sed -i "s|VERSION_PLACEHOLDER|${VERSION}|g" tap/Formula/crun.rb
+          sed -i "s|SHA_DARWIN_ARM64|${{ steps.sha.outputs.darwin_arm64 }}|g" tap/Formula/crun.rb
+          sed -i "s|SHA_DARWIN_AMD64|${{ steps.sha.outputs.darwin_amd64 }}|g" tap/Formula/crun.rb
+          sed -i "s|SHA_LINUX_ARM64|${{ steps.sha.outputs.linux_arm64 }}|g" tap/Formula/crun.rb
+          sed -i "s|SHA_LINUX_AMD64|${{ steps.sha.outputs.linux_amd64 }}|g" tap/Formula/crun.rb
+
+      - name: Commit and push formula
+        working-directory: tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/crun.rb
+          git commit -m "Update crun to ${{ steps.version.outputs.version }}"
+          git push
