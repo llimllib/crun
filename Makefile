@@ -1,4 +1,4 @@
-.PHONY: check fmt clippy doc test build integration-test test-linux all
+.PHONY: check fmt clippy doc test build integration-test test-linux release all
 
 # Run all checks
 all: check test
@@ -30,6 +30,10 @@ test:
 integration-test:
 	cargo build --release
 	cd tests/integration && npm test
+
+# Bump version, tag, and push (triggers release workflow)
+release:
+	./tools/release.sh
 
 # Run all checks and tests in a Linux container
 test-linux:
