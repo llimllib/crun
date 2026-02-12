@@ -501,16 +501,19 @@ describe('--kill-signal', () => {
 });
 
 describe('--kill-timeout', () => {
-    // Note: We use "trap '' TERM; sleep N" to create a process that ignores SIGTERM.
-    // This works because bash's trap is applied to the shell itself which is the
-    // process group leader that receives the signal from crun.
+    // Note: We use a Node.js script that ignores SIGTERM instead of "trap '' TERM; sleep N"
+    // because shell trap only protects the shell process, not its children (like sleep).
+    // When we send signals to process groups, all processes receive the signal.
+    //
+    // We use "node sleep.mjs 0.1" instead of "exit 0" for the second command to give
+    // the first command time to start and register its signal handler.
 
     it('sends SIGKILL after timeout when process ignores SIGTERM', async () => {
         const lines = await run(
-            `--kill-timeout 100 --kill-others "trap '' TERM; sleep 10" "exit 0"`
+            `--kill-timeout 100 --kill-others "node ignore-sigterm.mjs 10" "node sleep.mjs 0.1"`
         ).getLogLines();
 
-        expect(lines).toContainEqual(expect.stringContaining('[1] exit 0 exited with code 0'));
+        expect(lines).toContainEqual(expect.stringContaining('[1] node sleep.mjs 0.1 exited with code 0'));
         expect(lines).toContainEqual(
             expect.stringContaining('Sending SIGTERM to other processes')
         );
@@ -518,7 +521,7 @@ describe('--kill-timeout', () => {
             expect.stringContaining('Sending SIGKILL to 1 processes')
         );
         expect(lines).toContainEqual(
-            expect.stringMatching(/trap '' TERM; sleep 10 exited with code (SIGKILL|9)/)
+            expect.stringMatching(/ignore-sigterm.mjs 10 exited with code (SIGKILL|9)/)
         );
     });
 
@@ -544,7 +547,7 @@ describe('--kill-timeout', () => {
 
     it('does not escalate to SIGKILL when --kill-signal is already SIGKILL', async () => {
         const lines = await run(
-            `--kill-timeout 100 --kill-signal SIGKILL --kill-others "trap '' TERM; sleep 10" "exit 0"`
+            `--kill-timeout 100 --kill-signal SIGKILL --kill-others "node ignore-sigterm.mjs 10" "exit 0"`
         ).getLogLines();
 
         expect(lines).toContainEqual(expect.stringContaining('[1] exit 0 exited with code 0'));
@@ -555,16 +558,17 @@ describe('--kill-timeout', () => {
         const sigkillLines = lines.filter(line => line.includes('Sending SIGKILL'));
         expect(sigkillLines.length).toBe(1);
         expect(lines).toContainEqual(
-            expect.stringMatching(/trap '' TERM; sleep 10 exited with code (SIGKILL|9)/)
+            expect.stringMatching(/ignore-sigterm.mjs 10 exited with code (SIGKILL|9)/)
         );
     });
 
     it('works with --kill-others-on-fail', async () => {
+        // Use "node sleep.mjs 0.1; exit 1" to give the first command time to start
         const lines = await run(
-            `--kill-timeout 100 --kill-others-on-fail "trap '' TERM; sleep 10" "exit 1"`
+            `--kill-timeout 100 --kill-others-on-fail "node ignore-sigterm.mjs 10" "node sleep.mjs 0.1; exit 1"`
         ).getLogLines();
 
-        expect(lines).toContainEqual(expect.stringContaining('[1] exit 1 exited with code 1'));
+        expect(lines).toContainEqual(expect.stringContaining('[1] node sleep.mjs 0.1; exit 1 exited with code 1'));
         expect(lines).toContainEqual(
             expect.stringContaining('Sending SIGTERM to other processes')
         );
@@ -572,7 +576,7 @@ describe('--kill-timeout', () => {
             expect.stringContaining('Sending SIGKILL to 1 processes')
         );
         expect(lines).toContainEqual(
-            expect.stringMatching(/trap '' TERM; sleep 10 exited with code (SIGKILL|9)/)
+            expect.stringMatching(/ignore-sigterm.mjs 10 exited with code (SIGKILL|9)/)
         );
     });
 });
