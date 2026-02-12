@@ -68,6 +68,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
     let kill_others = args.kill_others;
     let kill_others_on_fail = args.kill_others_on_fail;
     let kill_signal = args.kill_signal.clone();
+    let kill_timeout = args.kill_timeout;
     let group = args.group;
     let timings = args.timings;
     let restart_tries = args.restart_tries;
@@ -184,6 +185,9 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
 
     // Track which commands have exited (final, not restarting)
     let mut exited: Vec<bool> = vec![false; num_commands];
+
+    // Track whether we've already initiated the kill-others sequence
+    let mut kill_initiated = false;
 
     // Track restart counts
     let mut restart_counts: Vec<i32> = vec![0; num_commands];
@@ -450,15 +454,39 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
 
                 // Handle --kill-others / --kill-others-on-fail
                 let should_kill = kill_others || (kill_others_on_fail && code != 0);
-                if should_kill {
-                    println!(
-                        "{}",
-                        format_line(
-                            "-->",
-                            &format!("Sending {} to other processes..", kill_signal)
-                        )
-                    );
-                    kill_other_processes(index, &exited, &pids, &kill_signal);
+                if should_kill && !kill_initiated {
+                    kill_initiated = true;
+                    let remaining = count_killable_processes(index, &exited, &pids);
+                    if remaining > 0 {
+                        println!(
+                            "{}",
+                            format_line(
+                                "-->",
+                                &format!("Sending {} to other processes..", kill_signal)
+                            )
+                        );
+                        kill_other_processes(index, &exited, &pids, &kill_signal);
+
+                        // Schedule SIGKILL escalation if timeout is set and signal is not already SIGKILL
+                        #[cfg(unix)]
+                        if let Some(timeout_ms) = kill_timeout {
+                            if parse_signal(&kill_signal) != libc::SIGKILL {
+                                let pids_for_kill = Arc::clone(&pids);
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_millis(
+                                        timeout_ms,
+                                    ))
+                                    .await;
+                                    force_kill_remaining(&pids_for_kill);
+                                });
+                            }
+                        }
+                        #[cfg(windows)]
+                        {
+                            // On Windows, taskkill /F already force-kills, so no escalation needed
+                            let _ = kill_timeout;
+                        }
+                    }
                 }
             }
         }
@@ -538,6 +566,18 @@ fn should_restart(restart_tries: i32, current_restarts: i32) -> bool {
     }
 }
 
+/// Count how many processes are still killable (not exited, not the one that triggered the kill).
+fn count_killable_processes(
+    except_index: usize,
+    exited: &[bool],
+    pids: &Arc<std::sync::Mutex<HashMap<usize, u32>>>,
+) -> usize {
+    let pids = pids.lock().unwrap();
+    pids.iter()
+        .filter(|(index, _)| **index != except_index && !exited[**index])
+        .count()
+}
+
 /// Kill all running processes except the one at `except_index`.
 ///
 /// On Unix, sends the specified signal to the process group (negative PID) so that child processes
@@ -563,6 +603,40 @@ fn kill_other_processes(
             #[cfg(windows)]
             {
                 kill_process_tree(*pid);
+            }
+        }
+    }
+}
+
+/// Send SIGKILL to all processes that are still running.
+///
+/// This is called after the kill timeout expires, to force-terminate any processes
+/// that didn't respond to the initial signal.
+#[cfg(unix)]
+fn force_kill_remaining(pids: &Arc<std::sync::Mutex<HashMap<usize, u32>>>) {
+    let pids_guard = pids.lock().unwrap();
+    // Collect PIDs that are still alive (process group exists)
+    let mut killable_pids = Vec::new();
+    for pid in pids_guard.values() {
+        // Check if the process group still exists by sending signal 0
+        let pgid = -(*pid as i32);
+        if unsafe { libc::kill(pgid, 0) } == 0 {
+            killable_pids.push(*pid);
+        }
+    }
+    drop(pids_guard);
+
+    if !killable_pids.is_empty() {
+        println!(
+            "{}",
+            crate::output::format_line(
+                "-->",
+                &format!("Sending SIGKILL to {} processes..", killable_pids.len())
+            )
+        );
+        for pid in killable_pids {
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
             }
         }
     }
