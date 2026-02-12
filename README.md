@@ -37,6 +37,12 @@ crun -k "npm run watch" "cargo run -- serve"
 crun --kill-others-on-fail "npm test" "cargo test"
 ```
 
+## Cross-platform
+
+`crun` should work on windows, mac and unix.
+
+I only use it on mac so please file issues if it does not work on your platform
+
 ## Options
 
 ```
