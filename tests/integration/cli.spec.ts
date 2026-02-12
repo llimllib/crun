@@ -266,6 +266,56 @@ describe('--pad-prefix', () => {
     });
 });
 
+describe('template prefix', () => {
+    it('uses {index} without brackets', async () => {
+        const lines = await run('-p "{index}" "echo foo"').getLogLines();
+
+        // Template prefixes should NOT have brackets
+        expect(lines).toContainEqual(expect.stringMatching(/^0 foo$/));
+        expect(lines).toContainEqual(expect.stringMatching(/^0 echo foo exited with code 0$/));
+    });
+
+    it('uses {name} without brackets', async () => {
+        const lines = await run('-p "{name}" -n myname "echo foo"').getLogLines();
+
+        expect(lines).toContainEqual(expect.stringMatching(/^myname foo$/));
+    });
+
+    it('uses {index}-{name} combined template', async () => {
+        const lines = await run('-p "{index}-{name}" -n server "echo foo"').getLogLines();
+
+        expect(lines).toContainEqual(expect.stringMatching(/^0-server foo$/));
+    });
+
+    it('uses {time} placeholder with timestamp', async () => {
+        const lines = await run('-p "{time}" "echo foo"').getLogLines();
+
+        // Should have a timestamp like "2026-02-11 21:30:00.123"
+        expect(lines).toContainEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} foo$/));
+    });
+
+    it('uses {time} {pid} combined template', async () => {
+        const lines = await run('-p "{time} {pid}" "echo foo"').getLogLines();
+
+        // Should have "timestamp pid message" format
+        expect(lines).toContainEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \d+ foo$/));
+    });
+
+    it('uses {command} placeholder', async () => {
+        const lines = await run('-p "{command}" "echo foo"').getLogLines();
+
+        expect(lines).toContainEqual(expect.stringMatching(/^echo foo foo$/));
+    });
+
+    it('pads template prefixes correctly', async () => {
+        const lines = await run('--pad-prefix -p "{name}" -n foo,barbaz "echo a" "echo b"').getLogLines();
+
+        // Template prefixes should be padded without brackets
+        expect(lines).toContainEqual(expect.stringMatching(/^foo    (a|echo a exited)/));
+        expect(lines).toContainEqual(expect.stringMatching(/^barbaz (b|echo b exited)/));
+    });
+});
+
 describe('--restart-tries', () => {
     it('changes how many times a command will restart', async () => {
         const lines = await run('--restart-tries 1 "exit 1"').getLogLines();

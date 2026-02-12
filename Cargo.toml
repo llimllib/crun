@@ -16,7 +16,7 @@ thiserror = "1"
 # Default features disabled to avoid iana-time-zone, which links CoreFoundation
 # on macOS and breaks cross-compilation from Linux via cargo-zigbuild.
 # We use Utc instead of Local timestamps as a tradeoff.
-chrono = { version = "0.4", default-features = false, features = ["std", "now"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "now", "clock"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

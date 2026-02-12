@@ -73,6 +73,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
     let handle_input = args.handle_input;
     let prefix_length = args.prefix_length;
     let do_pad = args.pad_prefix;
+    let timestamp_format = args.timestamp_format.clone();
 
     // Get the final list of commands (with placeholder expansion if -P is used)
     let command_lines: Vec<String> = args.get_commands();
@@ -100,12 +101,13 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
     };
 
     // Pre-compute prefixes for padding
+    let is_template = prefix_style.is_template();
     let prefixes: Vec<String> = commands
         .iter()
-        .map(|cmd| format_prefix(cmd, &prefix_style, None, prefix_length))
+        .map(|cmd| format_prefix(cmd, &prefix_style, None, prefix_length, &timestamp_format))
         .collect();
     let pad_width = if do_pad {
-        max_prefix_inner_width(&prefixes)
+        max_prefix_inner_width(&prefixes, is_template)
     } else {
         0
     };
@@ -252,6 +254,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                         do_pad,
                         pad_width,
                         &colors[index],
+                        &timestamp_format,
                     );
                     let ts = started_at[index].unwrap().1.format("%Y-%m-%d %H:%M:%S%.3f");
                     let msg = format!("{} started at {}", commands[index].command_line, ts);
@@ -281,6 +284,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                         do_pad,
                         pad_width,
                         &colors[index],
+                        &timestamp_format,
                     )
                 };
 
@@ -314,6 +318,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                         do_pad,
                         pad_width,
                         &colors[index],
+                        &timestamp_format,
                     );
                     let ts = ended_at[index].unwrap().1.format("%Y-%m-%d %H:%M:%S%.3f");
                     let duration_ms = ended_at[index]
@@ -345,6 +350,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                         do_pad,
                         pad_width,
                         &colors[index],
+                        &timestamp_format,
                     );
 
                     // Log exit
@@ -413,6 +419,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                         do_pad,
                         pad_width,
                         &colors[index],
+                        &timestamp_format,
                     );
                     let exit_msg = format_exit_message(&commands[index]);
                     if !exit_msg.is_empty() {
@@ -570,6 +577,7 @@ fn kill_process_tree(pid: u32) {
 }
 
 /// Build the prefix string for a command.
+#[allow(clippy::too_many_arguments)]
 fn make_prefix(
     cmd: &CommandInfo,
     style: &PrefixStyle,
@@ -578,10 +586,12 @@ fn make_prefix(
     do_pad: bool,
     pad_width: usize,
     color: &str,
+    timestamp_format: &str,
 ) -> String {
-    let p = format_prefix(cmd, style, pid, prefix_length);
+    let p = format_prefix(cmd, style, pid, prefix_length, timestamp_format);
+    let is_template = style.is_template();
     let p = if do_pad && pad_width > 0 {
-        pad_prefix(&p, pad_width)
+        pad_prefix(&p, pad_width, is_template)
     } else {
         p
     };
