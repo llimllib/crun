@@ -390,17 +390,82 @@ describe('--timings', () => {
 });
 
 describe('--passthrough-arguments', () => {
-    it('argument placeholders are properly replaced when passthrough-arguments is enabled', async () => {
-        const lines = await run('--passthrough-arguments "echo {1}" -- foo').getLogLines();
+    describe('replaces placeholders when enabled', () => {
+        it.each(['--passthrough-arguments', '-P'])('%s replaces {1} placeholder', async (arg) => {
+            const lines = await run(`${arg} "echo {1}" -- foo`).getLogLines();
 
-        // The command should have received 'foo' as an argument
-        expect(lines).toContainEqual(expect.stringContaining('foo'));
+            // The command should output 'foo'
+            expect(lines).toContainEqual(expect.stringContaining('[0] foo'));
+            // Exit message should show the expanded command
+            expect(lines).toContainEqual(expect.stringContaining('[0] echo foo exited with code 0'));
+        });
     });
 
-    it('argument placeholders are not replaced when passthrough-arguments is disabled', async () => {
+    it('replaces multiple numbered placeholders in multiple commands', async () => {
+        const lines = await run('-P "echo {1}" "echo {2}" -- foo bar').getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('[0] foo'));
+        expect(lines).toContainEqual(expect.stringContaining('[1] bar'));
+        expect(lines).toContainEqual(expect.stringContaining('[0] echo foo exited with code 0'));
+        expect(lines).toContainEqual(expect.stringContaining('[1] echo bar exited with code 0'));
+    });
+
+    it('replaces {2} {1} in reverse order', async () => {
+        const lines = await run('-P "echo {2} {1}" -- foo bar').getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('[0] bar foo'));
+    });
+
+    it('replaces {@} with all arguments space-separated', async () => {
+        const lines = await run('-P "echo {@}" -- foo bar baz').getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('[0] foo bar baz'));
+        expect(lines).toContainEqual(expect.stringContaining('[0] echo foo bar baz exited with code 0'));
+    });
+
+    it('replaces {*} with all arguments as single quoted string', async () => {
+        const lines = await run('-P "echo {*}" -- foo bar').getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('[0] foo bar'));
+        // Exit message should show the quoted form
+        expect(lines).toContainEqual(expect.stringMatching(/echo.*foo bar.*exited with code 0/));
+    });
+
+    it('replaces missing placeholder with empty string', async () => {
+        const lines = await run('-P "echo {3}" -- foo bar').getLogLines();
+
+        // {3} should be replaced with empty string since only 2 args provided
+        expect(lines).toContainEqual(expect.stringContaining('[0] echo  exited with code 0'));
+    });
+
+    it('does not replace escaped placeholders', async () => {
+        const lines = await run('-P "echo \\{1}" -- foo').getLogLines();
+
+        // Escaped placeholder should be output literally
+        expect(lines).toContainEqual(expect.stringContaining('[0] {1}'));
+        expect(lines).toContainEqual(expect.stringContaining('[0] echo {1} exited with code 0'));
+    });
+
+    it('quotes arguments containing spaces', async () => {
+        const lines = await run('-P "echo {1}" -- "foo bar"').getLogLines();
+
+        expect(lines).toContainEqual(expect.stringContaining('[0] foo bar'));
+    });
+
+    it('does not replace placeholders when disabled', async () => {
         const lines = await run('"echo {1}" -- echo').getLogLines();
 
         // {1} should be printed literally
-        expect(lines).toContainEqual(expect.stringContaining('{1}'));
+        expect(lines).toContainEqual(expect.stringContaining('[0] {1}'));
+        expect(lines).toContainEqual(expect.stringContaining('[0] echo {1} exited with code 0'));
+        // 'echo' after -- should be treated as a separate command
+        expect(lines).toContainEqual(expect.stringContaining('[1] echo exited with code 0'));
+    });
+
+    it('treats extra args as commands when disabled', async () => {
+        const { exit } = run('"echo first" -- "echo second"');
+        const { code } = await exit;
+
+        expect(code).toBe(0);
     });
 });

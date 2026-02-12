@@ -9,6 +9,12 @@ pub struct Args {
     #[arg(required = false)]
     pub commands: Vec<String>,
 
+    /// Additional arguments passed after `--`.
+    /// With `-P`, these are used for placeholder substitution.
+    /// Without `-P`, these are treated as additional commands.
+    #[arg(last = true)]
+    pub extra_args: Vec<String>,
+
     // ─── General ─────────────────────────────────────────────────────────────
     /// How many processes should run at once.
     /// Exact number or a percent of CPUs available (e.g. "50%")
@@ -143,5 +149,255 @@ impl Args {
         } else {
             self.hide.split(',').map(|s| s.to_string()).collect()
         }
+    }
+
+    /// Get the final list of commands to run.
+    /// If `-P` is enabled, commands are the original commands with placeholders expanded.
+    /// If `-P` is disabled, extra_args are appended as additional commands.
+    pub fn get_commands(&self) -> Vec<String> {
+        if self.passthrough_arguments {
+            // Expand placeholders in commands using extra_args
+            self.commands
+                .iter()
+                .map(|cmd| expand_arguments(cmd, &self.extra_args))
+                .collect()
+        } else {
+            // Treat extra_args as additional commands
+            let mut cmds = self.commands.clone();
+            cmds.extend(self.extra_args.clone());
+            cmds
+        }
+    }
+}
+
+/// Expand argument placeholders in a command string.
+///
+/// Supported placeholders:
+/// - `{1}`, `{2}`, etc. - individual positional arguments (1-indexed)
+/// - `{@}` - all arguments, space-separated
+/// - `{*}` - all arguments joined as a single quoted string
+///
+/// Placeholders can be escaped with a backslash: `\{1}` becomes `{1}`.
+pub fn expand_arguments(command: &str, args: &[String]) -> String {
+    let mut result = String::with_capacity(command.len());
+    let chars: Vec<char> = command.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        // Check for escaped placeholder: \{...}
+        if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '{' {
+            // Look for the closing brace to see if this is a valid placeholder
+            if let Some(placeholder_end) = find_placeholder_end(&chars, i + 1) {
+                let placeholder_content: String = chars[i + 2..placeholder_end].iter().collect();
+                if is_valid_placeholder(&placeholder_content) {
+                    // Valid escaped placeholder - output the placeholder literally (without backslash)
+                    result.push('{');
+                    result.push_str(&placeholder_content);
+                    result.push('}');
+                    i = placeholder_end + 1;
+                    continue;
+                }
+            }
+            // Not a valid placeholder pattern, output the backslash
+            result.push(chars[i]);
+            i += 1;
+            continue;
+        }
+
+        // Check for placeholder: {...}
+        if chars[i] == '{' {
+            if let Some(placeholder_end) = find_placeholder_end(&chars, i) {
+                let placeholder_content: String = chars[i + 1..placeholder_end].iter().collect();
+                if is_valid_placeholder(&placeholder_content) {
+                    // Replace the placeholder
+                    let replacement = replace_placeholder(&placeholder_content, args);
+                    result.push_str(&replacement);
+                    i = placeholder_end + 1;
+                    continue;
+                }
+            }
+        }
+
+        // Regular character
+        result.push(chars[i]);
+        i += 1;
+    }
+
+    result
+}
+
+/// Find the position of the closing brace for a placeholder starting at `start`.
+/// Returns None if no closing brace is found.
+fn find_placeholder_end(chars: &[char], start: usize) -> Option<usize> {
+    if chars[start] != '{' {
+        return None;
+    }
+    for (j, &ch) in chars.iter().enumerate().skip(start + 1) {
+        if ch == '}' {
+            return Some(j);
+        }
+        // If we hit another '{' or invalid char before '}', it's not a valid placeholder
+        if ch == '{' {
+            return None;
+        }
+    }
+    None
+}
+
+/// Check if the placeholder content is valid.
+/// Valid: "@", "*", or a positive integer starting with 1-9.
+fn is_valid_placeholder(content: &str) -> bool {
+    if content == "@" || content == "*" {
+        return true;
+    }
+    // Must be a positive integer starting with 1-9
+    if content.is_empty() {
+        return false;
+    }
+    let first_char = content.chars().next().unwrap();
+    if !('1'..='9').contains(&first_char) {
+        return false;
+    }
+    content.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Replace a placeholder with its value from args.
+fn replace_placeholder(placeholder: &str, args: &[String]) -> String {
+    if args.is_empty() {
+        return String::new();
+    }
+
+    match placeholder {
+        "@" => {
+            // All arguments, each quoted if necessary, space-separated
+            args.iter()
+                .map(|a| shell_quote(a))
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+        "*" => {
+            // All arguments joined with space, then quoted as a single string
+            shell_quote(&args.join(" "))
+        }
+        n => {
+            // Numeric placeholder (1-indexed)
+            if let Ok(index) = n.parse::<usize>() {
+                if index > 0 && index <= args.len() {
+                    shell_quote(&args[index - 1])
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        }
+    }
+}
+
+/// Quote a string for shell if it contains special characters.
+/// Uses single quotes, escaping any embedded single quotes.
+fn shell_quote(s: &str) -> String {
+    // If the string contains no special characters, return as-is
+    if s.chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '/')
+    {
+        return s.to_string();
+    }
+
+    // Use single quotes, escaping any embedded single quotes
+    // 'foo' -> 'foo'
+    // "foo's bar" -> 'foo'"'"'s bar'
+    format!("'{}'", s.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_expand_no_placeholders() {
+        assert_eq!(expand_arguments("echo foo", &["bar".into()]), "echo foo");
+    }
+
+    #[test]
+    fn test_expand_single_placeholder() {
+        assert_eq!(expand_arguments("echo {1}", &["foo".into()]), "echo foo");
+    }
+
+    #[test]
+    fn test_expand_placeholder_with_space() {
+        assert_eq!(
+            expand_arguments("echo {1}", &["foo bar".into()]),
+            "echo 'foo bar'"
+        );
+    }
+
+    #[test]
+    fn test_expand_multiple_placeholders() {
+        assert_eq!(
+            expand_arguments("echo {2} {1}", &["foo".into(), "bar".into()]),
+            "echo bar foo"
+        );
+    }
+
+    #[test]
+    fn test_expand_missing_placeholder() {
+        assert_eq!(
+            expand_arguments("echo {3}", &["foo".into(), "bar".into()]),
+            "echo "
+        );
+    }
+
+    #[test]
+    fn test_expand_all_placeholder_empty() {
+        let empty: Vec<String> = vec![];
+        assert_eq!(expand_arguments("echo {@}", &empty), "echo ");
+    }
+
+    #[test]
+    fn test_expand_combined_placeholder_empty() {
+        let empty: Vec<String> = vec![];
+        assert_eq!(expand_arguments("echo {*}", &empty), "echo ");
+    }
+
+    #[test]
+    fn test_expand_all_placeholder() {
+        assert_eq!(
+            expand_arguments("echo {@}", &["foo".into(), "bar".into()]),
+            "echo foo bar"
+        );
+    }
+
+    #[test]
+    fn test_expand_combined_placeholder() {
+        assert_eq!(
+            expand_arguments("echo {*}", &["foo".into(), "bar".into()]),
+            "echo 'foo bar'"
+        );
+    }
+
+    #[test]
+    fn test_expand_escaped_placeholders() {
+        assert_eq!(
+            expand_arguments(r"echo \{1} \{@} \{*}", &["foo".into(), "bar".into()]),
+            "echo {1} {@} {*}"
+        );
+    }
+
+    #[test]
+    fn test_shell_quote_simple() {
+        assert_eq!(shell_quote("foo"), "foo");
+        assert_eq!(shell_quote("foo-bar"), "foo-bar");
+        assert_eq!(shell_quote("foo_bar"), "foo_bar");
+    }
+
+    #[test]
+    fn test_shell_quote_with_space() {
+        assert_eq!(shell_quote("foo bar"), "'foo bar'");
+    }
+
+    #[test]
+    fn test_shell_quote_with_single_quote() {
+        assert_eq!(shell_quote("foo's"), "'foo'\"'\"'s'");
     }
 }

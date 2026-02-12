@@ -40,9 +40,11 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
     let prefix_length = args.prefix_length;
     let do_pad = args.pad_prefix;
 
+    // Get the final list of commands (with placeholder expansion if -P is used)
+    let command_lines: Vec<String> = args.get_commands();
+
     // Build command infos
-    let mut commands: Vec<CommandInfo> = args
-        .commands
+    let mut commands: Vec<CommandInfo> = command_lines
         .iter()
         .enumerate()
         .map(|(i, cmd_line)| {
@@ -52,7 +54,6 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
         .collect();
 
     let num_commands = commands.len();
-    let command_lines: Vec<String> = args.commands.clone();
 
     // Assign colors to commands
     let colors = assign_colors(&args.prefix_colors, num_commands, args.no_color || raw);
