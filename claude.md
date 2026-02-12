@@ -57,6 +57,11 @@ Code must work on both Unix (Linux/macOS) and Windows. Key differences:
 - **`libc` crate**: Unix-only dependency; use `#[cfg(unix)]` guards
 
 When adding process management code:
+
 1. Use `#[cfg(unix)]` and `#[cfg(windows)]` blocks
 2. Test compiles for Windows: `cargo check --target x86_64-pc-windows-msvc`
 3. Refer to `concurrently/` source to see how the JS version handles cross-platform issues (they use the `tree-kill` npm package which calls `taskkill` on Windows)
+
+## Concurrently
+
+In the `main` worktree, there is a gitignored checkout of `concurrently`. When you have questions about what `concurrently` does, consult the code located there.
