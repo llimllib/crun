@@ -924,14 +924,60 @@ fn determine_exit_code(
                 1
             }
         }
-        _ => {
-            if commands.iter().all(|c| c.exit_code() == Some(0)) {
-                0
+        s => {
+            // Handle command-{index}, command-{name}, and their negations
+            if let Some(pattern) = s.strip_prefix('!') {
+                // Negation: all commands EXCEPT the specified one must succeed
+                if let Some(target) = parse_command_pattern(pattern, commands) {
+                    // All commands except the target must have exit code 0
+                    if commands
+                        .iter()
+                        .filter(|c| c.index != target)
+                        .all(|c| c.exit_code() == Some(0))
+                    {
+                        0
+                    } else {
+                        1
+                    }
+                } else {
+                    // Unknown pattern, fall back to "all" behavior
+                    if commands.iter().all(|c| c.exit_code() == Some(0)) {
+                        0
+                    } else {
+                        1
+                    }
+                }
+            } else if let Some(target) = parse_command_pattern(s, commands) {
+                // The specified command must succeed
+                commands
+                    .get(target)
+                    .and_then(|c| c.exit_code())
+                    .unwrap_or(1)
             } else {
-                1
+                // Unknown pattern, fall back to "all" behavior
+                if commands.iter().all(|c| c.exit_code() == Some(0)) {
+                    0
+                } else {
+                    1
+                }
             }
         }
     }
+}
+
+/// Parse a command pattern like "command-0" or "command-foo" and return the matching command index.
+fn parse_command_pattern(pattern: &str, commands: &[CommandInfo]) -> Option<usize> {
+    let suffix = pattern.strip_prefix("command-")?;
+
+    // First, try to parse as an index
+    if let Ok(index) = suffix.parse::<usize>() {
+        if index < commands.len() {
+            return Some(index);
+        }
+    }
+
+    // Otherwise, try to match by name
+    commands.iter().find(|c| c.name == suffix).map(|c| c.index)
 }
 
 #[cfg(test)]
@@ -1058,5 +1104,189 @@ mod tests {
         assert_eq!(parse_max_processes(Some("abc"), 5), 5);
         assert_eq!(parse_max_processes(Some(""), 5), 5);
         assert_eq!(parse_max_processes(Some("abc%"), 5), 5);
+    }
+
+    #[test]
+    fn test_parse_command_pattern_by_index() {
+        let commands = vec![
+            CommandInfo::new(0, "foo".into(), "echo foo".into()),
+            CommandInfo::new(1, "bar".into(), "echo bar".into()),
+        ];
+        assert_eq!(parse_command_pattern("command-0", &commands), Some(0));
+        assert_eq!(parse_command_pattern("command-1", &commands), Some(1));
+        assert_eq!(parse_command_pattern("command-2", &commands), None); // out of bounds
+    }
+
+    #[test]
+    fn test_parse_command_pattern_by_name() {
+        let commands = vec![
+            CommandInfo::new(0, "foo".into(), "echo foo".into()),
+            CommandInfo::new(1, "bar".into(), "echo bar".into()),
+        ];
+        assert_eq!(parse_command_pattern("command-foo", &commands), Some(0));
+        assert_eq!(parse_command_pattern("command-bar", &commands), Some(1));
+        assert_eq!(parse_command_pattern("command-baz", &commands), None); // not found
+    }
+
+    #[test]
+    fn test_parse_command_pattern_invalid() {
+        let commands = vec![CommandInfo::new(0, "foo".into(), "echo".into())];
+        assert_eq!(parse_command_pattern("invalid", &commands), None);
+        assert_eq!(parse_command_pattern("cmd-0", &commands), None);
+        assert_eq!(parse_command_pattern("", &commands), None);
+    }
+
+    #[test]
+    fn test_determine_exit_code_command_index_success() {
+        let commands = vec![
+            {
+                let mut c = CommandInfo::new(0, "0".into(), "echo".into());
+                c.state = CommandState::Exited { code: 0 };
+                c
+            },
+            {
+                let mut c = CommandInfo::new(1, "1".into(), "fail".into());
+                c.state = CommandState::Exited { code: 1 };
+                c
+            },
+        ];
+        let order = vec![(0, 0), (1, 1)];
+        // command-0 succeeded, so exit 0
+        assert_eq!(determine_exit_code("command-0", &commands, &order), 0);
+    }
+
+    #[test]
+    fn test_determine_exit_code_command_index_failure() {
+        let commands = vec![
+            {
+                let mut c = CommandInfo::new(0, "0".into(), "echo".into());
+                c.state = CommandState::Exited { code: 0 };
+                c
+            },
+            {
+                let mut c = CommandInfo::new(1, "1".into(), "fail".into());
+                c.state = CommandState::Exited { code: 1 };
+                c
+            },
+        ];
+        let order = vec![(0, 0), (1, 1)];
+        // command-1 failed with code 1
+        assert_eq!(determine_exit_code("command-1", &commands, &order), 1);
+    }
+
+    #[test]
+    fn test_determine_exit_code_command_name_success() {
+        let commands = vec![
+            {
+                let mut c = CommandInfo::new(0, "foo".into(), "echo".into());
+                c.state = CommandState::Exited { code: 0 };
+                c
+            },
+            {
+                let mut c = CommandInfo::new(1, "bar".into(), "fail".into());
+                c.state = CommandState::Exited { code: 1 };
+                c
+            },
+        ];
+        let order = vec![(0, 0), (1, 1)];
+        // command-foo succeeded
+        assert_eq!(determine_exit_code("command-foo", &commands, &order), 0);
+    }
+
+    #[test]
+    fn test_determine_exit_code_command_name_failure() {
+        let commands = vec![
+            {
+                let mut c = CommandInfo::new(0, "foo".into(), "echo".into());
+                c.state = CommandState::Exited { code: 0 };
+                c
+            },
+            {
+                let mut c = CommandInfo::new(1, "bar".into(), "fail".into());
+                c.state = CommandState::Exited { code: 1 };
+                c
+            },
+        ];
+        let order = vec![(0, 0), (1, 1)];
+        // command-bar failed
+        assert_eq!(determine_exit_code("command-bar", &commands, &order), 1);
+    }
+
+    #[test]
+    fn test_determine_exit_code_negated_command_index_success() {
+        let commands = vec![
+            {
+                let mut c = CommandInfo::new(0, "0".into(), "echo".into());
+                c.state = CommandState::Exited { code: 0 };
+                c
+            },
+            {
+                let mut c = CommandInfo::new(1, "1".into(), "fail".into());
+                c.state = CommandState::Exited { code: 1 };
+                c
+            },
+        ];
+        let order = vec![(0, 0), (1, 1)];
+        // All commands except command-1 succeeded (only command-0, which has code 0)
+        assert_eq!(determine_exit_code("!command-1", &commands, &order), 0);
+    }
+
+    #[test]
+    fn test_determine_exit_code_negated_command_index_failure() {
+        let commands = vec![
+            {
+                let mut c = CommandInfo::new(0, "0".into(), "echo".into());
+                c.state = CommandState::Exited { code: 0 };
+                c
+            },
+            {
+                let mut c = CommandInfo::new(1, "1".into(), "fail".into());
+                c.state = CommandState::Exited { code: 1 };
+                c
+            },
+        ];
+        let order = vec![(0, 0), (1, 1)];
+        // All commands except command-0 must succeed, but command-1 failed
+        assert_eq!(determine_exit_code("!command-0", &commands, &order), 1);
+    }
+
+    #[test]
+    fn test_determine_exit_code_negated_command_name() {
+        let commands = vec![
+            {
+                let mut c = CommandInfo::new(0, "foo".into(), "echo".into());
+                c.state = CommandState::Exited { code: 0 };
+                c
+            },
+            {
+                let mut c = CommandInfo::new(1, "bar".into(), "fail".into());
+                c.state = CommandState::Exited { code: 1 };
+                c
+            },
+        ];
+        let order = vec![(0, 0), (1, 1)];
+        // All commands except command-bar (only foo) must succeed
+        assert_eq!(determine_exit_code("!command-bar", &commands, &order), 0);
+    }
+
+    #[test]
+    fn test_determine_exit_code_unknown_pattern_fallback() {
+        let commands = vec![
+            {
+                let mut c = CommandInfo::new(0, "0".into(), "echo".into());
+                c.state = CommandState::Exited { code: 0 };
+                c
+            },
+            {
+                let mut c = CommandInfo::new(1, "1".into(), "fail".into());
+                c.state = CommandState::Exited { code: 1 };
+                c
+            },
+        ];
+        let order = vec![(0, 0), (1, 1)];
+        // Unknown pattern falls back to "all" behavior
+        assert_eq!(determine_exit_code("unknown", &commands, &order), 1);
+        assert_eq!(determine_exit_code("command-99", &commands, &order), 1);
+        assert_eq!(determine_exit_code("!command-99", &commands, &order), 1);
     }
 }
