@@ -25,6 +25,46 @@ enum Event {
     Exited { index: usize, state: CommandState },
 }
 
+/// Restart delay configuration.
+#[derive(Debug, Clone, PartialEq)]
+enum RestartDelay {
+    /// Fixed delay in milliseconds.
+    Fixed(u64),
+    /// Exponential backoff (100ms, 200ms, 400ms, ...).
+    Exponential,
+}
+
+/// Parse the restart-after argument value.
+///
+/// Returns the restart delay configuration:
+/// - "exponential" -> Exponential backoff
+/// - A number -> Fixed delay in milliseconds
+/// - Invalid/empty -> No delay (0ms)
+fn parse_restart_delay(value: &str) -> RestartDelay {
+    if value.eq_ignore_ascii_case("exponential") {
+        RestartDelay::Exponential
+    } else if let Ok(ms) = value.parse::<u64>() {
+        RestartDelay::Fixed(ms)
+    } else {
+        RestartDelay::Fixed(0)
+    }
+}
+
+/// Calculate the actual delay in milliseconds for a restart.
+///
+/// For fixed delays, returns the configured value.
+/// For exponential backoff, returns 100ms * 2^restart_count (capped at ~1 minute).
+fn calculate_restart_delay(delay: &RestartDelay, restart_count: i32) -> u64 {
+    match delay {
+        RestartDelay::Fixed(ms) => *ms,
+        RestartDelay::Exponential => {
+            // Base delay of 100ms, doubling each time, capped at ~1 minute
+            let exp = restart_count.min(9) as u32; // 2^9 * 100 = 51200ms
+            100 * 2u64.pow(exp)
+        }
+    }
+}
+
 /// Parse the max-processes argument value.
 ///
 /// Returns the maximum number of concurrent processes to run.
@@ -72,6 +112,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
     let group = args.group;
     let timings = args.timings;
     let restart_tries = args.restart_tries;
+    let restart_after = parse_restart_delay(&args.restart_after);
     let handle_input = args.handle_input;
     let prefix_length = args.prefix_length;
     let do_pad = args.pad_prefix;
@@ -386,13 +427,18 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                         );
                     }
 
+                    let current_restart = restart_counts[index];
                     restart_counts[index] += 1;
                     commands[index].state = CommandState::Pending;
 
-                    // Respawn the command
+                    // Respawn the command (with delay if configured)
                     let tx_clone = tx.clone();
                     let cmd_line = command_lines[index].clone();
+                    let delay_ms = calculate_restart_delay(&restart_after, current_restart);
                     tokio::spawn(async move {
+                        if delay_ms > 0 {
+                            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        }
                         spawn_command(index, &cmd_line, tx_clone, None, false).await;
                     });
 
@@ -1421,5 +1467,56 @@ mod tests {
         // Unknown defaults to SIGTERM
         assert_eq!(parse_signal("UNKNOWN"), libc::SIGTERM);
         assert_eq!(parse_signal(""), libc::SIGTERM);
+    }
+
+    #[test]
+    fn test_parse_restart_delay_fixed() {
+        assert_eq!(parse_restart_delay("0"), RestartDelay::Fixed(0));
+        assert_eq!(parse_restart_delay("100"), RestartDelay::Fixed(100));
+        assert_eq!(parse_restart_delay("5000"), RestartDelay::Fixed(5000));
+    }
+
+    #[test]
+    fn test_parse_restart_delay_exponential() {
+        assert_eq!(
+            parse_restart_delay("exponential"),
+            RestartDelay::Exponential
+        );
+        assert_eq!(
+            parse_restart_delay("EXPONENTIAL"),
+            RestartDelay::Exponential
+        );
+        assert_eq!(
+            parse_restart_delay("Exponential"),
+            RestartDelay::Exponential
+        );
+    }
+
+    #[test]
+    fn test_parse_restart_delay_invalid() {
+        // Invalid values default to 0ms delay
+        assert_eq!(parse_restart_delay(""), RestartDelay::Fixed(0));
+        assert_eq!(parse_restart_delay("abc"), RestartDelay::Fixed(0));
+        assert_eq!(parse_restart_delay("-100"), RestartDelay::Fixed(0));
+    }
+
+    #[test]
+    fn test_calculate_restart_delay_fixed() {
+        let fixed = RestartDelay::Fixed(500);
+        assert_eq!(calculate_restart_delay(&fixed, 0), 500);
+        assert_eq!(calculate_restart_delay(&fixed, 1), 500);
+        assert_eq!(calculate_restart_delay(&fixed, 10), 500);
+    }
+
+    #[test]
+    fn test_calculate_restart_delay_exponential() {
+        let exp = RestartDelay::Exponential;
+        assert_eq!(calculate_restart_delay(&exp, 0), 100); // 100 * 2^0 = 100
+        assert_eq!(calculate_restart_delay(&exp, 1), 200); // 100 * 2^1 = 200
+        assert_eq!(calculate_restart_delay(&exp, 2), 400); // 100 * 2^2 = 400
+        assert_eq!(calculate_restart_delay(&exp, 3), 800); // 100 * 2^3 = 800
+        assert_eq!(calculate_restart_delay(&exp, 9), 51200); // 100 * 2^9 = 51200 (max)
+        assert_eq!(calculate_restart_delay(&exp, 10), 51200); // capped at 2^9
+        assert_eq!(calculate_restart_delay(&exp, 100), 51200); // still capped
     }
 }
