@@ -387,4 +387,62 @@ mod tests {
         assert!(!PrefixStyle::None.is_template());
         assert!(PrefixStyle::Template("{index}".to_string()).is_template());
     }
+
+    #[test]
+    fn test_unicode_to_chrono_format() {
+        // Year patterns
+        assert_eq!(unicode_to_chrono_format("yyyy"), "%Y");
+        assert_eq!(unicode_to_chrono_format("yy"), "%y");
+
+        // Month patterns
+        assert_eq!(unicode_to_chrono_format("MM"), "%m");
+        assert_eq!(unicode_to_chrono_format("M"), "%-m");
+        assert_eq!(unicode_to_chrono_format("MMM"), "%b");
+        assert_eq!(unicode_to_chrono_format("MMMM"), "%B");
+
+        // Day patterns
+        assert_eq!(unicode_to_chrono_format("dd"), "%d");
+        assert_eq!(unicode_to_chrono_format("d"), "%-d");
+
+        // Hour patterns (24-hour)
+        assert_eq!(unicode_to_chrono_format("HH"), "%H");
+        assert_eq!(unicode_to_chrono_format("H"), "%-H");
+
+        // Hour patterns (12-hour)
+        assert_eq!(unicode_to_chrono_format("hh"), "%I");
+        assert_eq!(unicode_to_chrono_format("h"), "%-I");
+
+        // Minute patterns
+        assert_eq!(unicode_to_chrono_format("mm"), "%M");
+        assert_eq!(unicode_to_chrono_format("m"), "%-M");
+
+        // Second patterns
+        assert_eq!(unicode_to_chrono_format("ss"), "%S");
+        assert_eq!(unicode_to_chrono_format("s"), "%-S");
+
+        // Fractional seconds (milliseconds) - these use %3f for chrono
+        assert_eq!(unicode_to_chrono_format("SSS"), "%3f");
+        assert_eq!(unicode_to_chrono_format("SS"), "%3f");
+        assert_eq!(unicode_to_chrono_format("S"), "%3f");
+
+        // AM/PM
+        assert_eq!(unicode_to_chrono_format("a"), "%p");
+
+        // Day of week
+        assert_eq!(unicode_to_chrono_format("EEE"), "%a");
+        assert_eq!(unicode_to_chrono_format("EEEE"), "%A");
+
+        // Combined formats (like concurrently's default)
+        assert_eq!(
+            unicode_to_chrono_format("yyyy-MM-dd HH:mm:ss.SSS"),
+            "%Y-%m-%d %H:%M:%S.%3f"
+        );
+
+        // Simple time format
+        assert_eq!(unicode_to_chrono_format("HH:mm:ss"), "%H:%M:%S");
+
+        // Quoted literals
+        assert_eq!(unicode_to_chrono_format("HH'h'mm'm'"), "%Hh%Mm");
+        assert_eq!(unicode_to_chrono_format("''"), "'"); // Escaped single quote
+    }
 }
