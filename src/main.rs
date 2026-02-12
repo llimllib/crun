@@ -19,6 +19,15 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Validate that no command is empty (matching concurrently's behavior)
+    let commands = args.get_commands();
+    for cmd in &commands {
+        if cmd.trim().is_empty() {
+            eprintln!("[crun] command cannot be empty");
+            std::process::exit(1);
+        }
+    }
+
     let exit_code = runner::run(args).await?;
     std::process::exit(exit_code);
 }
