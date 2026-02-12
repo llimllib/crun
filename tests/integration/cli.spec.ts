@@ -383,6 +383,80 @@ describe('--kill-others-on-fail', () => {
     });
 });
 
+describe('--kill-signal', () => {
+    it('uses SIGTERM by default', async () => {
+        const lines = await run(
+            '--kill-others "node sleep.mjs 10" "exit 0"'
+        ).getLogLines();
+
+        expect(lines).toContainEqual(
+            expect.stringContaining('Sending SIGTERM to other processes')
+        );
+        expect(lines).toContainEqual(
+            expect.stringMatching(
+                createKillMessage('[0] node sleep.mjs 10', 'SIGTERM')
+            )
+        );
+    });
+
+    it('sends SIGINT when --kill-signal SIGINT', async () => {
+        const lines = await run(
+            '--kill-signal SIGINT --kill-others "node sleep.mjs 10" "exit 0"'
+        ).getLogLines();
+
+        expect(lines).toContainEqual(
+            expect.stringContaining('Sending SIGINT to other processes')
+        );
+        expect(lines).toContainEqual(
+            expect.stringMatching(
+                createKillMessage('[0] node sleep.mjs 10', 'SIGINT')
+            )
+        );
+    });
+
+    it('sends SIGHUP when --kill-signal SIGHUP', async () => {
+        const lines = await run(
+            '--kill-signal SIGHUP --kill-others "node sleep.mjs 10" "exit 0"'
+        ).getLogLines();
+
+        expect(lines).toContainEqual(
+            expect.stringContaining('Sending SIGHUP to other processes')
+        );
+        // SIGHUP exits with code 1 on most systems
+        expect(lines).toContainEqual(
+            expect.stringMatching(/node sleep\.mjs 10 exited with code (SIGHUP|1)/)
+        );
+    });
+
+    it('sends SIGKILL when --kill-signal SIGKILL', async () => {
+        const lines = await run(
+            '--kill-signal SIGKILL --kill-others "node sleep.mjs 10" "exit 0"'
+        ).getLogLines();
+
+        expect(lines).toContainEqual(
+            expect.stringContaining('Sending SIGKILL to other processes')
+        );
+        expect(lines).toContainEqual(
+            expect.stringMatching(/node sleep\.mjs 10 exited with code (SIGKILL|9)/)
+        );
+    });
+
+    it('works with --kill-others-on-fail', async () => {
+        const lines = await run(
+            '--kill-signal SIGINT --kill-others-on-fail "node sleep.mjs 10" "exit 1"'
+        ).getLogLines();
+
+        expect(lines).toContainEqual(
+            expect.stringContaining('Sending SIGINT to other processes')
+        );
+        expect(lines).toContainEqual(
+            expect.stringMatching(
+                createKillMessage('[0] node sleep.mjs 10', 'SIGINT')
+            )
+        );
+    });
+});
+
 describe('--handle-input', () => {
     describe('forwards input to first process by default', () => {
         it.each(['--handle-input', '-i'])('%s', async (arg) => {

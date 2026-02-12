@@ -67,6 +67,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
     let raw = args.raw;
     let kill_others = args.kill_others;
     let kill_others_on_fail = args.kill_others_on_fail;
+    let kill_signal = args.kill_signal.clone();
     let group = args.group;
     let timings = args.timings;
     let restart_tries = args.restart_tries;
@@ -452,9 +453,12 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                 if should_kill {
                     println!(
                         "{}",
-                        format_line("-->", "Sending SIGTERM to other processes..")
+                        format_line(
+                            "-->",
+                            &format!("Sending {} to other processes..", kill_signal)
+                        )
                     );
-                    kill_other_processes(index, &exited, &pids);
+                    kill_other_processes(index, &exited, &pids, &kill_signal);
                 }
             }
         }
@@ -536,22 +540,24 @@ fn should_restart(restart_tries: i32, current_restarts: i32) -> bool {
 
 /// Kill all running processes except the one at `except_index`.
 ///
-/// On Unix, sends SIGTERM to the process group (negative PID) so that child processes
+/// On Unix, sends the specified signal to the process group (negative PID) so that child processes
 /// spawned by the shell are also terminated.
-/// On Windows, uses `taskkill /T /F` to kill the process tree.
+/// On Windows, uses `taskkill /T /F` to kill the process tree (signal is ignored).
 fn kill_other_processes(
     except_index: usize,
     exited: &[bool],
     pids: &Arc<std::sync::Mutex<HashMap<usize, u32>>>,
+    #[allow(unused_variables)] kill_signal: &str,
 ) {
     let pids = pids.lock().unwrap();
     for (index, pid) in pids.iter() {
         if *index != except_index && !exited[*index] {
             #[cfg(unix)]
             {
+                let signal = parse_signal(kill_signal);
                 // Kill the process group (negative PID) so shell children also receive the signal
                 unsafe {
-                    libc::kill(-(*pid as i32), libc::SIGTERM);
+                    libc::kill(-(*pid as i32), signal);
                 }
             }
             #[cfg(windows)]
@@ -720,11 +726,24 @@ async fn spawn_command(
 #[cfg(unix)]
 fn signal_name(signal: i32) -> String {
     match signal {
-        1 => "SIGHUP".to_string(),
-        2 => "SIGINT".to_string(),
-        9 => "SIGKILL".to_string(),
-        15 => "SIGTERM".to_string(),
+        libc::SIGHUP => "SIGHUP".to_string(),
+        libc::SIGINT => "SIGINT".to_string(),
+        libc::SIGKILL => "SIGKILL".to_string(),
+        libc::SIGTERM => "SIGTERM".to_string(),
         _ => signal.to_string(),
+    }
+}
+
+/// Parse a signal name (e.g., "SIGTERM", "SIGINT") to its libc constant.
+/// Returns SIGTERM as the default for unrecognized signals.
+#[cfg(unix)]
+fn parse_signal(name: &str) -> i32 {
+    match name.to_uppercase().as_str() {
+        "SIGHUP" | "HUP" | "1" => libc::SIGHUP,
+        "SIGINT" | "INT" | "2" => libc::SIGINT,
+        "SIGKILL" | "KILL" | "9" => libc::SIGKILL,
+        "SIGTERM" | "TERM" | "15" => libc::SIGTERM,
+        _ => libc::SIGTERM,
     }
 }
 
@@ -1298,5 +1317,35 @@ mod tests {
         assert_eq!(determine_exit_code("unknown", &commands, &order), 1);
         assert_eq!(determine_exit_code("command-99", &commands, &order), 1);
         assert_eq!(determine_exit_code("!command-99", &commands, &order), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_signal() {
+        // Full names
+        assert_eq!(parse_signal("SIGTERM"), libc::SIGTERM);
+        assert_eq!(parse_signal("SIGINT"), libc::SIGINT);
+        assert_eq!(parse_signal("SIGKILL"), libc::SIGKILL);
+        assert_eq!(parse_signal("SIGHUP"), libc::SIGHUP);
+
+        // Short names
+        assert_eq!(parse_signal("TERM"), libc::SIGTERM);
+        assert_eq!(parse_signal("INT"), libc::SIGINT);
+        assert_eq!(parse_signal("KILL"), libc::SIGKILL);
+        assert_eq!(parse_signal("HUP"), libc::SIGHUP);
+
+        // Numeric
+        assert_eq!(parse_signal("15"), libc::SIGTERM);
+        assert_eq!(parse_signal("2"), libc::SIGINT);
+        assert_eq!(parse_signal("9"), libc::SIGKILL);
+        assert_eq!(parse_signal("1"), libc::SIGHUP);
+
+        // Case insensitive
+        assert_eq!(parse_signal("sigterm"), libc::SIGTERM);
+        assert_eq!(parse_signal("Sigint"), libc::SIGINT);
+
+        // Unknown defaults to SIGTERM
+        assert_eq!(parse_signal("UNKNOWN"), libc::SIGTERM);
+        assert_eq!(parse_signal(""), libc::SIGTERM);
     }
 }
