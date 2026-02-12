@@ -99,6 +99,48 @@ describe('exiting conditions', () => {
         expect(code).toBeGreaterThan(0);
     });
 
+    it('is of success when --success=command-{index} and that command succeeds', async () => {
+        const { exit } = run('--success=command-0 "echo one" "exit 1"');
+        const { code } = await exit;
+        expect(code).toBe(0);
+    });
+
+    it('is of failure when --success=command-{index} and that command fails', async () => {
+        const { exit } = run('--success=command-1 "echo one" "exit 1"');
+        const { code } = await exit;
+        expect(code).toBeGreaterThan(0);
+    });
+
+    it('is of success when --success=command-{name} and that command succeeds', async () => {
+        const { exit } = run('-n foo,bar --success=command-foo "echo one" "exit 1"');
+        const { code } = await exit;
+        expect(code).toBe(0);
+    });
+
+    it('is of failure when --success=command-{name} and that command fails', async () => {
+        const { exit } = run('-n foo,bar --success=command-bar "echo one" "exit 1"');
+        const { code } = await exit;
+        expect(code).toBeGreaterThan(0);
+    });
+
+    it('is of success when --success=!command-{index} and all other commands succeed', async () => {
+        const { exit } = run('--success="!command-1" "echo one" "exit 1"');
+        const { code } = await exit;
+        expect(code).toBe(0);
+    });
+
+    it('is of failure when --success=!command-{index} and another command fails', async () => {
+        const { exit } = run('--success="!command-0" "echo one" "exit 1"');
+        const { code } = await exit;
+        expect(code).toBeGreaterThan(0);
+    });
+
+    it('is of success when --success=!command-{name} and all other commands succeed', async () => {
+        const { exit } = run('-n foo,bar --success="!command-bar" "echo one" "exit 1"');
+        const { code } = await exit;
+        expect(code).toBe(0);
+    });
+
     it('is of success when a SIGINT is sent', async () => {
         const child = run('"node read-echo.mjs"');
         // Wait for command to have started before sending SIGINT
