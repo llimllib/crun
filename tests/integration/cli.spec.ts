@@ -328,6 +328,49 @@ describe('--restart-tries', () => {
     });
 });
 
+describe('--restart-after', () => {
+    it('delays restart by specified milliseconds', async () => {
+        const start = Date.now();
+        const lines = await run('--restart-tries 1 --restart-after 200 "exit 1"').getLogLines();
+        const elapsed = Date.now() - start;
+
+        // Should have restarted once
+        expect(lines).toContainEqual(expect.stringContaining('[0] exit 1 restarted'));
+        // Should have taken at least 200ms due to restart delay
+        expect(elapsed).toBeGreaterThanOrEqual(180); // Allow small timing variance
+    });
+
+    it('delays restart with exponential backoff', async () => {
+        const start = Date.now();
+        const lines = await run('--restart-tries 2 --restart-after exponential "exit 1"').getLogLines();
+        const elapsed = Date.now() - start;
+
+        // Should have restarted twice
+        const restarts = lines.filter(l => l.includes('restarted'));
+        expect(restarts).toHaveLength(2);
+        // Exponential: 100ms + 200ms = 300ms minimum
+        expect(elapsed).toBeGreaterThanOrEqual(280); // Allow small timing variance
+    });
+
+    it('restarts immediately with --restart-after 0', async () => {
+        const start = Date.now();
+        const lines = await run('--restart-tries 1 --restart-after 0 "exit 1"').getLogLines();
+        const elapsed = Date.now() - start;
+
+        // Should have restarted
+        expect(lines).toContainEqual(expect.stringContaining('[0] exit 1 restarted'));
+        // Should be fast (no delay)
+        expect(elapsed).toBeLessThan(500);
+    });
+
+    it('is case-insensitive for exponential', async () => {
+        const lines = await run('--restart-tries 1 --restart-after EXPONENTIAL "exit 1"').getLogLines();
+
+        // Should have restarted (proves it was parsed correctly)
+        expect(lines).toContainEqual(expect.stringContaining('[0] exit 1 restarted'));
+    });
+});
+
 describe('--kill-others', () => {
     describe('kills on success', () => {
         it.each(['--kill-others', '-k'])('%s', async (arg) => {
