@@ -46,3 +46,17 @@ Always ask for explicit approval before:
 - Prefer explicit error handling with `anyhow`/`thiserror` over `.unwrap()`
 - Keep modules focused: one concern per file
 - Add doc comments to all public items
+
+## Cross-Platform Support
+
+Code must work on both Unix (Linux/macOS) and Windows. Key differences:
+
+- **Shell invocation**: Unix uses `/bin/sh -c`, Windows uses `cmd /C` (see `command.rs`)
+- **Process groups**: Unix uses `setsid()` + `kill(-pid, signal)`, Windows uses `taskkill /T /F`
+- **Signals**: Unix has SIGINT/SIGTERM/SIGHUP, Windows only has Ctrl+C (`tokio::signal::ctrl_c()`)
+- **`libc` crate**: Unix-only dependency; use `#[cfg(unix)]` guards
+
+When adding process management code:
+1. Use `#[cfg(unix)]` and `#[cfg(windows)]` blocks
+2. Test compiles for Windows: `cargo check --target x86_64-pc-windows-msvc`
+3. Refer to `concurrently/` source to see how the JS version handles cross-platform issues (they use the `tree-kill` npm package which calls `taskkill` on Windows)

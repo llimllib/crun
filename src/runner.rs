@@ -119,6 +119,25 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
         });
     }
 
+    // Set up Ctrl+C handling on Windows
+    #[cfg(windows)]
+    {
+        let pids_for_signal = Arc::clone(&pids);
+        let caught_sigint_for_handler = Arc::clone(&caught_sigint);
+        tokio::spawn(async move {
+            // Wait for Ctrl+C
+            if tokio::signal::ctrl_c().await.is_ok() {
+                caught_sigint_for_handler.store(true, Ordering::SeqCst);
+
+                // Kill all child process trees using taskkill
+                let pids = pids_for_signal.lock().unwrap();
+                for pid in pids.values() {
+                    kill_process_tree(*pid);
+                }
+            }
+        });
+    }
+
     // Track order of completion for --success first/last
     let mut exit_order: Vec<(usize, i32)> = Vec::new();
 
@@ -454,8 +473,9 @@ fn should_restart(restart_tries: i32, current_restarts: i32) -> bool {
 
 /// Kill all running processes except the one at `except_index`.
 ///
-/// Sends SIGTERM to the process group (negative PID) so that child processes
+/// On Unix, sends SIGTERM to the process group (negative PID) so that child processes
 /// spawned by the shell are also terminated.
+/// On Windows, uses `taskkill /T /F` to kill the process tree.
 fn kill_other_processes(
     except_index: usize,
     exited: &[bool],
@@ -471,12 +491,26 @@ fn kill_other_processes(
                     libc::kill(-(*pid as i32), libc::SIGTERM);
                 }
             }
-            #[cfg(not(unix))]
+            #[cfg(windows)]
             {
-                let _ = pid;
+                kill_process_tree(*pid);
             }
         }
     }
+}
+
+/// Kill a process and all its descendants on Windows using taskkill.
+///
+/// Uses `taskkill /pid <pid> /T /F` where:
+/// - `/T` kills the process tree (all child processes)
+/// - `/F` forcefully terminates the processes
+#[cfg(windows)]
+fn kill_process_tree(pid: u32) {
+    let _ = std::process::Command::new("taskkill")
+        .args(["/pid", &pid.to_string(), "/T", "/F"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
 /// Build the prefix string for a command.

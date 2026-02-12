@@ -17,6 +17,8 @@ thiserror = "1"
 # on macOS and breaks cross-compilation from Linux via cargo-zigbuild.
 # We use Utc instead of Local timestamps as a tradeoff.
 chrono = { version = "0.4", default-features = false, features = ["std", "now"] }
+
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]

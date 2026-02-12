@@ -7,7 +7,8 @@ pub enum CommandState {
     Running,
     /// Command exited with a code.
     Exited { code: i32 },
-    /// Command was killed by a signal.
+    /// Command was killed by a signal (Unix only).
+    #[allow(dead_code)]
     Killed { signal: String },
     /// Command encountered an error before or during execution.
     Errored { message: String },
