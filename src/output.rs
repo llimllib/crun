@@ -78,17 +78,17 @@ pub fn format_prefix(
 
 /// Format a timestamp using the given format string.
 /// The format string uses Unicode date field symbols (like concurrently),
-/// which are converted to chrono's strftime format.
+/// which are converted to strftime format for jiff.
 fn format_timestamp(format: &str) -> String {
-    let chrono_format = unicode_to_chrono_format(format);
-    chrono::Local::now().format(&chrono_format).to_string()
+    let strftime_format = unicode_to_strftime_format(format);
+    jiff::Zoned::now().strftime(&strftime_format).to_string()
 }
 
-/// Convert a Unicode date format string to chrono's strftime format.
+/// Convert a Unicode date format string to strftime format.
 /// Supports the most common patterns used by concurrently.
 ///
 /// Unicode reference: <https://unicode.org/reports/tr35/tr35-dates.html#Date_Field_Symbol_Table>
-fn unicode_to_chrono_format(format: &str) -> String {
+fn unicode_to_strftime_format(format: &str) -> String {
     let mut result = String::with_capacity(format.len() * 2);
     let chars: Vec<char> = format.chars().collect();
     let mut i = 0;
@@ -120,8 +120,8 @@ fn unicode_to_chrono_format(format: &str) -> String {
             count += 1;
         }
 
-        // Convert Unicode pattern to chrono format
-        let chrono_pattern = match (c, count) {
+        // Convert Unicode pattern to strftime format
+        let strftime_pattern = match (c, count) {
             // Year
             ('y', 4) | ('Y', 4) => "%Y",
             ('y', 2) | ('Y', 2) => "%y",
@@ -173,13 +173,13 @@ fn unicode_to_chrono_format(format: &str) -> String {
             }
         };
 
-        // Handle fractional seconds specially - chrono uses %.Nf which outputs "0.NNN"
+        // Handle fractional seconds specially - jiff uses %.Nf which outputs "0.NNN"
         // We want just "NNN" like Unicode SSS
         if c == 'S' {
             // We'll handle this specially in the final output
             result.push_str("%3f");
         } else {
-            result.push_str(chrono_pattern);
+            result.push_str(strftime_pattern);
         }
         i += count;
     }

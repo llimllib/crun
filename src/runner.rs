@@ -3,7 +3,7 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use chrono::Utc;
+use jiff::Zoned;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
@@ -234,8 +234,8 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
     let mut restart_counts: Vec<i32> = vec![0; num_commands];
 
     // Track timing info
-    let mut started_at: Vec<Option<(Instant, chrono::DateTime<Utc>)>> = vec![None; num_commands];
-    let mut ended_at: Vec<Option<(Instant, chrono::DateTime<Utc>)>> = vec![None; num_commands];
+    let mut started_at: Vec<Option<(Instant, Zoned)>> = vec![None; num_commands];
+    let mut ended_at: Vec<Option<(Instant, Zoned)>> = vec![None; num_commands];
 
     // For --group: buffer output per command, active index tracks sequential flushing
     let mut group_buffers: Vec<Vec<String>> = vec![Vec::new(); num_commands];
@@ -288,7 +288,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                     pids.lock().unwrap().insert(index, p);
                 }
                 commands[index].state = CommandState::Running;
-                started_at[index] = Some((Instant::now(), Utc::now()));
+                started_at[index] = Some((Instant::now(), Zoned::now()));
 
                 // Log timing start
                 if timings && !raw {
@@ -302,7 +302,11 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                         &colors[index],
                         &timestamp_format,
                     );
-                    let ts = started_at[index].unwrap().1.format("%Y-%m-%d %H:%M:%S%.3f");
+                    let ts = started_at[index]
+                        .as_ref()
+                        .unwrap()
+                        .1
+                        .strftime("%Y-%m-%d %H:%M:%S%.3f");
                     let msg = format!("{} started at {}", commands[index].command_line, ts);
                     output_line(
                         &msg,
@@ -352,7 +356,7 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                 };
 
                 commands[index].state = state;
-                ended_at[index] = Some((Instant::now(), Utc::now()));
+                ended_at[index] = Some((Instant::now(), Zoned::now()));
 
                 // Log timing stop
                 if timings && !raw {
@@ -366,11 +370,16 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                         &colors[index],
                         &timestamp_format,
                     );
-                    let ts = ended_at[index].unwrap().1.format("%Y-%m-%d %H:%M:%S%.3f");
+                    let ts = ended_at[index]
+                        .as_ref()
+                        .unwrap()
+                        .1
+                        .strftime("%Y-%m-%d %H:%M:%S%.3f");
                     let duration_ms = ended_at[index]
+                        .as_ref()
                         .unwrap()
                         .0
-                        .duration_since(started_at[index].unwrap().0)
+                        .duration_since(started_at[index].as_ref().unwrap().0)
                         .as_millis();
                     let msg = format!(
                         "{} stopped at {} after {}ms",
@@ -870,15 +879,15 @@ fn parse_signal(name: &str) -> i32 {
 /// Print the timings summary table.
 fn print_timings_table(
     commands: &[CommandInfo],
-    started_at: &[Option<(Instant, chrono::DateTime<Utc>)>],
-    ended_at: &[Option<(Instant, chrono::DateTime<Utc>)>],
+    started_at: &[Option<(Instant, Zoned)>],
+    ended_at: &[Option<(Instant, Zoned)>],
 ) {
     // Calculate column widths
     let mut rows: Vec<(String, String, String, String, String)> = Vec::new();
 
     for (i, cmd) in commands.iter().enumerate() {
         let name = cmd.name.clone();
-        let duration = match (started_at[i], ended_at[i]) {
+        let duration = match (&started_at[i], &ended_at[i]) {
             (Some(s), Some(e)) => {
                 let ms = e.0.duration_since(s.0).as_millis();
                 if ms >= 1000 {
