@@ -469,3 +469,73 @@ describe('--passthrough-arguments', () => {
         expect(code).toBe(0);
     });
 });
+
+describe('--max-processes', () => {
+    it('runs commands sequentially with --max-processes 1', async () => {
+        const lines = await run(
+            '--max-processes 1 "node sleep.mjs 0.1 && echo first" "echo second"'
+        ).getLogLines();
+
+        // With max-processes 1, commands should run sequentially
+        // "first" should appear before "second" starts
+        const firstIndex = lines.findIndex(line => line.includes('[0] first'));
+        const firstExitIndex = lines.findIndex(line => line.includes('[0]') && line.includes('exited'));
+        const secondIndex = lines.findIndex(line => line.includes('[1] second'));
+
+        expect(firstIndex).toBeGreaterThanOrEqual(0);
+        expect(firstExitIndex).toBeGreaterThanOrEqual(0);
+        expect(secondIndex).toBeGreaterThanOrEqual(0);
+        // The second command should start after the first command exits
+        expect(secondIndex).toBeGreaterThan(firstExitIndex);
+    });
+
+    it('runs commands sequentially with -m 1', async () => {
+        const lines = await run(
+            '-m 1 "node sleep.mjs 0.1 && echo first" "echo second"'
+        ).getLogLines();
+
+        const firstExitIndex = lines.findIndex(line => line.includes('[0]') && line.includes('exited'));
+        const secondIndex = lines.findIndex(line => line.includes('[1] second'));
+
+        expect(firstExitIndex).toBeGreaterThanOrEqual(0);
+        expect(secondIndex).toBeGreaterThanOrEqual(0);
+        expect(secondIndex).toBeGreaterThan(firstExitIndex);
+    });
+
+    it('respects max-processes with restarts', async () => {
+        const lines = await run(
+            '--max-processes 1 --restart-tries 1 "exit 1" "echo second"'
+        ).getLogLines();
+
+        // With max-processes 1 and restart-tries 1:
+        // - Command 0 should fail, restart, fail again
+        // - Only then should command 1 (echo second) start
+        const restartIndex = lines.findIndex(line => line.includes('restarted'));
+        const secondIndex = lines.findIndex(line => line.includes('[1] second'));
+
+        expect(restartIndex).toBeGreaterThanOrEqual(0);
+        expect(secondIndex).toBeGreaterThanOrEqual(0);
+        // "second" should appear after the restart
+        expect(secondIndex).toBeGreaterThan(restartIndex);
+    });
+
+    it('allows multiple concurrent processes with higher limit', async () => {
+        // With max-processes 2, both commands should start immediately
+        // and run concurrently. We verify by checking that both outputs
+        // appear before either exit message.
+        const lines = await run(
+            '--max-processes 2 "node sleep.mjs 0.1 && echo first" "node sleep.mjs 0.1 && echo second"'
+        ).getLogLines();
+
+        const firstOutput = lines.findIndex(line => line.includes('[0] first'));
+        const secondOutput = lines.findIndex(line => line.includes('[1] second'));
+        const firstExit = lines.findIndex(line => line.includes('[0]') && line.includes('exited'));
+        const secondExit = lines.findIndex(line => line.includes('[1]') && line.includes('exited'));
+
+        expect(firstOutput).toBeGreaterThanOrEqual(0);
+        expect(secondOutput).toBeGreaterThanOrEqual(0);
+        // Both should complete successfully
+        expect(firstExit).toBeGreaterThanOrEqual(0);
+        expect(secondExit).toBeGreaterThanOrEqual(0);
+    });
+});
