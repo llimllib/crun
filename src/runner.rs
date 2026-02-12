@@ -25,6 +25,40 @@ enum Event {
     Exited { index: usize, state: CommandState },
 }
 
+/// Parse the max-processes argument value.
+///
+/// Returns the maximum number of concurrent processes to run.
+/// - If `None`, returns the number of commands (no limit).
+/// - If a number like "4", returns that number.
+/// - If a percentage like "50%", returns that percentage of available CPUs (minimum 1).
+fn parse_max_processes(value: Option<&str>, num_commands: usize) -> usize {
+    match value {
+        None => num_commands,
+        Some(s) => {
+            if let Some(percent_str) = s.strip_suffix('%') {
+                // Percentage of available CPUs
+                if let Ok(percent) = percent_str.parse::<f64>() {
+                    let num_cpus = std::thread::available_parallelism()
+                        .map(|p| p.get())
+                        .unwrap_or(1);
+                    let result = (num_cpus as f64 * percent / 100.0).round() as usize;
+                    result.max(1) // At least 1
+                } else {
+                    num_commands // Invalid percentage, no limit
+                }
+            } else if let Ok(n) = s.parse::<usize>() {
+                if n == 0 {
+                    num_commands // 0 means no limit
+                } else {
+                    n
+                }
+            } else {
+                num_commands // Invalid value, no limit
+            }
+        }
+    }
+}
+
 /// Run the commands according to the provided arguments.
 /// Returns the exit code that should be used.
 pub async fn run(args: Args) -> anyhow::Result<i32> {
@@ -78,6 +112,9 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
 
     // Channel for events from child tasks
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
+
+    // Parse max-processes to limit concurrency
+    let max_procs = parse_max_processes(args.max_processes.as_deref(), num_commands);
 
     // Track PIDs per command, shared with the signal handler
     let pids: Arc<std::sync::Mutex<HashMap<usize, u32>>> =
@@ -173,14 +210,21 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
         input::spawn_input_router(default_input_target, stdin_senders);
     }
 
-    // Spawn all commands
-    for (i, cmd_line) in command_lines.iter().enumerate() {
-        let tx = tx.clone();
-        let cmd_line = cmd_line.clone();
-        let stdin_rx = stdin_receivers.remove(&i);
-        tokio::spawn(async move {
-            spawn_command(i, &cmd_line, tx, stdin_rx, handle_input).await;
-        });
+    // Queue of commands waiting to be spawned (for max-processes limiting)
+    // We'll spawn up to max_procs initially, then spawn more as commands finish
+    let mut pending_commands: std::collections::VecDeque<usize> = (0..num_commands).collect();
+
+    // Spawn initial batch of commands (up to max_procs)
+    let initial_batch_size = max_procs.min(num_commands);
+    for _ in 0..initial_batch_size {
+        if let Some(i) = pending_commands.pop_front() {
+            let tx = tx.clone();
+            let cmd_line = command_lines[i].clone();
+            let stdin_rx = stdin_receivers.remove(&i);
+            tokio::spawn(async move {
+                spawn_command(i, &cmd_line, tx, stdin_rx, handle_input).await;
+            });
+        }
     }
 
     // Process events
@@ -347,6 +391,17 @@ pub async fn run(args: Args) -> anyhow::Result<i32> {
                 exited[index] = true;
                 exit_order.push((index, code));
                 final_count += 1;
+
+                // Spawn next pending command if any (for max-processes limiting)
+                if let Some(next_index) = pending_commands.pop_front() {
+                    let tx_clone = tx.clone();
+                    let cmd_line = command_lines[next_index].clone();
+                    let stdin_rx = stdin_receivers.remove(&next_index);
+                    tokio::spawn(async move {
+                        spawn_command(next_index, &cmd_line, tx_clone, stdin_rx, handle_input)
+                            .await;
+                    });
+                }
 
                 // Log exit (unless raw mode or hidden)
                 if !raw && !should_hide(index, &commands[index].name, &hide_list) {
@@ -964,5 +1019,44 @@ mod tests {
             format_exit_message(&cmd),
             "echo hello exited with code SIGTERM"
         );
+    }
+
+    #[test]
+    fn test_parse_max_processes_none() {
+        // None means no limit (use num_commands)
+        assert_eq!(parse_max_processes(None, 5), 5);
+        assert_eq!(parse_max_processes(None, 10), 10);
+    }
+
+    #[test]
+    fn test_parse_max_processes_numeric() {
+        assert_eq!(parse_max_processes(Some("1"), 5), 1);
+        assert_eq!(parse_max_processes(Some("3"), 5), 3);
+        assert_eq!(parse_max_processes(Some("10"), 5), 10);
+    }
+
+    #[test]
+    fn test_parse_max_processes_zero() {
+        // 0 means no limit
+        assert_eq!(parse_max_processes(Some("0"), 5), 5);
+    }
+
+    #[test]
+    fn test_parse_max_processes_percentage() {
+        // Percentage of available CPUs (at least 1)
+        let num_cpus = std::thread::available_parallelism()
+            .map(|p| p.get())
+            .unwrap_or(1);
+        let result = parse_max_processes(Some("50%"), 10);
+        let expected = ((num_cpus as f64 * 50.0 / 100.0).round() as usize).max(1);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_parse_max_processes_invalid() {
+        // Invalid values default to num_commands
+        assert_eq!(parse_max_processes(Some("abc"), 5), 5);
+        assert_eq!(parse_max_processes(Some(""), 5), 5);
+        assert_eq!(parse_max_processes(Some("abc%"), 5), 5);
     }
 }
