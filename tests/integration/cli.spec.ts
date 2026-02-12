@@ -501,16 +501,17 @@ describe('--kill-signal', () => {
 });
 
 describe('--kill-timeout', () => {
-    // Note: We use a Node.js script that ignores SIGTERM instead of "trap '' TERM; sleep N"
-    // because shell trap only protects the shell process, not its children (like sleep).
-    // When we send signals to process groups, all processes receive the signal.
+    // Note: We use "exec node" to replace the shell with node, making node the session
+    // leader. This ensures that when we send SIGTERM to the process group, only the
+    // node process (which ignores SIGTERM) receives it. Without exec, the shell also
+    // receives SIGTERM and dies, which can cause node to exit before SIGKILL is sent.
     //
     // We use "node sleep.mjs 0.1" instead of "exit 0" for the second command to give
     // the first command time to start and register its signal handler.
 
     it('sends SIGKILL after timeout when process ignores SIGTERM', async () => {
         const lines = await run(
-            `--kill-timeout 100 --kill-others "node ignore-sigterm.mjs 10" "node sleep.mjs 0.1"`
+            `--kill-timeout 100 --kill-others "exec node ignore-sigterm.mjs 10" "node sleep.mjs 0.1"`
         ).getLogLines();
 
         expect(lines).toContainEqual(expect.stringContaining('[1] node sleep.mjs 0.1 exited with code 0'));
@@ -547,7 +548,7 @@ describe('--kill-timeout', () => {
 
     it('does not escalate to SIGKILL when --kill-signal is already SIGKILL', async () => {
         const lines = await run(
-            `--kill-timeout 100 --kill-signal SIGKILL --kill-others "node ignore-sigterm.mjs 10" "exit 0"`
+            `--kill-timeout 100 --kill-signal SIGKILL --kill-others "exec node ignore-sigterm.mjs 10" "exit 0"`
         ).getLogLines();
 
         expect(lines).toContainEqual(expect.stringContaining('[1] exit 0 exited with code 0'));
@@ -565,7 +566,7 @@ describe('--kill-timeout', () => {
     it('works with --kill-others-on-fail', async () => {
         // Use "node sleep.mjs 0.1; exit 1" to give the first command time to start
         const lines = await run(
-            `--kill-timeout 100 --kill-others-on-fail "node ignore-sigterm.mjs 10" "node sleep.mjs 0.1; exit 1"`
+            `--kill-timeout 100 --kill-others-on-fail "exec node ignore-sigterm.mjs 10" "node sleep.mjs 0.1; exit 1"`
         ).getLogLines();
 
         expect(lines).toContainEqual(expect.stringContaining('[1] node sleep.mjs 0.1; exit 1 exited with code 1'));
