@@ -104,6 +104,12 @@ make test-linux       # run all tests in a Linux container
 make release          # bump version, tag, push
 ```
 
+## Mise
+
+To use this tool in a project managed by [mise](https://mise.jdx.dev/), run `mise use github:llimllib/crun`
+
+Then `mise` will install the tool for you when you `mise up` or `mise install`
+
 ## License
 
 MIT
