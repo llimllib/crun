@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - "v*"
+  # Allows re-running just the crates.io publish when a tag build published the
+  # GitHub release and Homebrew tap but failed to publish the crate. Trusted
+  # publishing is pinned to this workflow file, so it cannot live elsewhere.
+  workflow_dispatch:
+    inputs:
+      crates-only:
+        description: "Publish to crates.io only (skip GitHub release and tap)"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -12,9 +21,10 @@ permissions:
 jobs:
   release:
     name: Release
+    if: github.event_name == 'push' || !inputs.crates-only
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -29,7 +39,7 @@ jobs:
         run: cargo install cargo-zigbuild
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -41,9 +51,10 @@ jobs:
   publish-crates:
     name: Publish to crates.io
     needs: release
+    if: always() && needs.release.result != 'failure' && needs.release.result != 'cancelled'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Authenticate with crates.io

@@ -48,10 +48,23 @@ cargo clippy --all-targets --all-features -- -D warnings
 echo "Running cargo test..."
 cargo test
 
+# Cargo.lock records this crate's own version, so it must be bumped alongside
+# Cargo.toml. If the tag carries a stale lock, `cargo publish` regenerates it,
+# sees a dirty working tree, and aborts -- this is what broke the v0.9.0
+# crates.io release. --workspace touches only local packages, not dependencies.
+echo "Syncing Cargo.lock..."
+cargo update --workspace --quiet
+
+LOCK_VERSION=$(awk '/^name = "crun"$/ { getline; gsub(/version = "|"/, ""); print; exit }' Cargo.lock)
+if [ "$LOCK_VERSION" != "$NEW_VERSION" ]; then
+	echo "Cargo.lock says $LOCK_VERSION but Cargo.toml says $NEW_VERSION; aborting."
+	exit 1
+fi
+
 # Commit and tag
 MESSAGE="Release v$NEW_VERSION"
 
-git add Cargo.toml
+git add Cargo.toml Cargo.lock
 git commit -m "chore: bump version to $NEW_VERSION"
 git pull --rebase
 git tag -a "v$NEW_VERSION" -m "$MESSAGE"
